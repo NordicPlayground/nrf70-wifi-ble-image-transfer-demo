@@ -23,6 +23,10 @@ LOG_MODULE_REGISTER(sta, CONFIG_LOG_DEFAULT_LEVEL);
 #include <zephyr/net/wifi_mgmt.h>
 #include <zephyr/net/net_event.h>
 #include <zephyr/drivers/gpio.h>
+#include <zephyr/net/socket.h>
+#include <zephyr/sys/reboot.h>
+#include <zephyr/logging/log.h>
+#include <zephyr/logging/log_ctrl.h>
 
 #include <qspi_if.h>
 
@@ -32,6 +36,13 @@ LOG_MODULE_REGISTER(sta, CONFIG_LOG_DEFAULT_LEVEL);
 
 #define WIFI_SHELL_MGMT_EVENTS (NET_EVENT_WIFI_CONNECT_RESULT |		\
 				NET_EVENT_WIFI_DISCONNECT_RESULT)
+/* Macro called upon a fatal error, reboots the device. */
+#define FATAL_ERROR()					\
+	LOG_ERR("Fatal error! Rebooting the device.");	\
+	LOG_PANIC();					\
+	IF_ENABLED(CONFIG_REBOOT, (sys_reboot(0)))
+
+#define UDP_IP_HEADER_SIZE 28
 
 #define MAX_SSID_LEN        32
 #define STATUS_POLLING_MS   300
@@ -50,6 +61,16 @@ static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(LED0_NODE, gpios);
 static struct net_mgmt_event_callback wifi_shell_mgmt_cb;
 static struct net_mgmt_event_callback net_shell_mgmt_cb;
 
+/* Variables used to perform socket operations. */
+static int fd;
+static struct sockaddr_storage host_addr;
+
+/* Forward declarations */
+static void server_transmission_work_fn(struct k_work *work);
+
+/* Work item used to schedule periodic UDP transmissions. */
+static K_WORK_DELAYABLE_DEFINE(server_transmission_work, server_transmission_work_fn);
+
 static struct {
 	const struct shell *sh;
 	union {
@@ -63,6 +84,49 @@ static struct {
 	};
 } context;
 
+int count=0;
+static void server_transmission_work_fn(struct k_work *work)
+{
+	int err;
+        count++;
+
+	char buffer[CONFIG_UDP_SAMPLE_DATA_UPLOAD_SIZE_BYTES] = {"\0"};
+
+	LOG_INF("Transmitting UDP/IP payload of %d bytes to the "
+		"IP address %s, port number %d",
+		CONFIG_UDP_SAMPLE_DATA_UPLOAD_SIZE_BYTES + UDP_IP_HEADER_SIZE,
+		CONFIG_UDP_SAMPLE_SERVER_ADDRESS_STATIC,
+		CONFIG_UDP_SAMPLE_SERVER_PORT);
+
+	err = send(fd, buffer, sizeof(buffer), 0);
+	if (err < 0) {
+		LOG_ERR("Failed to transmit UDP packet, %d", -errno);
+	}
+
+	(void)k_work_reschedule(&server_transmission_work,
+				K_SECONDS(CONFIG_UDP_SAMPLE_DATA_UPLOAD_FREQUENCY_SECONDS));
+}
+
+static int server_addr_construct(void)
+{
+	int err;
+
+	struct sockaddr_in *server4 = ((struct sockaddr_in *)&host_addr);
+
+	server4->sin_family = AF_INET;
+	server4->sin_port = htons(CONFIG_UDP_SAMPLE_SERVER_PORT);
+
+	err = inet_pton(AF_INET, CONFIG_UDP_SAMPLE_SERVER_ADDRESS_STATIC, &server4->sin_addr);
+	if (err < 0) {
+		LOG_ERR("inet_pton, error: %d", -errno);
+		return err;
+	}
+
+	return 0;
+}
+
+//LED Blinking: Connecting to network
+//LED ON: Connected to network
 void toggle_led(void)
 {
 	int ret;
@@ -80,10 +144,10 @@ void toggle_led(void)
 
 	while (1) {
 		if (context.connected) {
-			gpio_pin_toggle_dt(&led);
+                        gpio_pin_set_dt(&led, 1);
 			k_msleep(LED_SLEEP_TIME_MS);
 		} else {
-			gpio_pin_set_dt(&led, 0);
+			gpio_pin_toggle_dt(&led);
 			k_msleep(LED_SLEEP_TIME_MS);
 		}
 	}
@@ -105,7 +169,7 @@ static int cmd_wifi_status(void)
 	}
 
 	LOG_INF("==================");
-	LOG_INF("State: %s", wifi_state_txt(status.state));
+	LOG_INF("WiFi State: %s", wifi_state_txt(status.state));
 
 	if (status.state >= WIFI_STATE_ASSOCIATED) {
 		uint8_t mac_string_buf[sizeof("xx:xx:xx:xx:xx:xx")];
@@ -166,7 +230,10 @@ static void handle_wifi_disconnect_result(struct net_mgmt_event_callback *cb)
 		context.connected = false;
 	}
 
-	cmd_wifi_status();
+        LOG_INF("Close UDP socket and stop transimtting");
+        (void)close(fd);
+	(void)k_work_cancel_delayable(&server_transmission_work);
+
 }
 
 static void wifi_mgmt_event_handler(struct net_mgmt_event_callback *cb,
@@ -182,6 +249,28 @@ static void wifi_mgmt_event_handler(struct net_mgmt_event_callback *cb,
 	default:
 		break;
 	}
+        cmd_wifi_status();
+}
+
+static void on_net_event_dhcp_bound(void)
+{
+	int err;
+
+	fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+	if (fd < 0) {
+		LOG_ERR("Failed to create UDP socket: %d", -errno);
+		FATAL_ERROR();
+		return;
+	}
+
+	err = connect(fd, (struct sockaddr *)&host_addr, sizeof(struct sockaddr_in));
+	if (err < 0) {
+		LOG_ERR("connect, error: %d", -errno);
+		FATAL_ERROR();
+		return;
+	}
+
+	(void)k_work_reschedule(&server_transmission_work, K_NO_WAIT);
 }
 
 static void print_dhcp_ip(struct net_mgmt_event_callback *cb)
@@ -201,6 +290,7 @@ static void net_mgmt_event_handler(struct net_mgmt_event_callback *cb,
 	switch (mgmt_event) {
 	case NET_EVENT_IPV4_DHCP_BOUND:
 		print_dhcp_ip(cb);
+                on_net_event_dhcp_bound();
 		break;
 	default:
 		break;
@@ -300,6 +390,13 @@ int main(void)
 
 	net_mgmt_add_event_callback(&net_shell_mgmt_cb);
 
+        int err = server_addr_construct();
+	if (err) {
+		LOG_INF("server_addr_construct, error: %d", err);
+		FATAL_ERROR();
+		return err;
+	}
+
 	LOG_INF("Starting %s with CPU frequency: %d MHz", CONFIG_BOARD, SystemCoreClock/MHZ(1));
 	k_sleep(K_SECONDS(1));
 
@@ -337,18 +434,11 @@ int main(void)
 		CONFIG_NET_CONFIG_MY_IPV4_NETMASK,
 		CONFIG_NET_CONFIG_MY_IPV4_GW);
 
-	while (1) {
-		wifi_connect();
+        wifi_connect();
+        while (!context.connect_result) {
+                cmd_wifi_status();
+                k_sleep(K_MSEC(STATUS_POLLING_MS));
+        }
 
-		while (!context.connect_result) {
-			cmd_wifi_status();
-			k_sleep(K_MSEC(STATUS_POLLING_MS));
-		}
-
-		if (context.connected) {
-			k_sleep(K_FOREVER);
-		}
-	}
-
-	return 0;
+        return 0;
 }
