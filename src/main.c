@@ -63,7 +63,13 @@ static struct net_mgmt_event_callback net_shell_mgmt_cb;
 
 /* Variables used to perform socket operations. */
 static int fd;
-static struct sockaddr_storage host_addr;
+
+/* Arducam mega commands https://www.arducam.com/docs/arducam-mega/arducam-mega-getting-started/packs/HostCommunicationProtocol.html*/
+#define COMMAND_MAX_SIZE 6 
+uint8_t udp_recv_buf[COMMAND_MAX_SIZE];
+uint8_t udp_recive_buf[COMMAND_MAX_SIZE];
+/* actucal command not count start(0x55) and stop(0xAA) codes*/
+uint8_t command_buf[COMMAND_MAX_SIZE-2];
 
 /* Forward declarations */
 static void server_transmission_work_fn(struct k_work *work);
@@ -72,6 +78,9 @@ static void video_preview_work_fn(struct k_work *work);
 /* Work item used to schedule periodic UDP transmissions. */
 static K_WORK_DELAYABLE_DEFINE(server_transmission_work, server_transmission_work_fn);
 static K_WORK_DELAYABLE_DEFINE(video_preview_work, video_preview_work_fn);
+K_MSGQ_DEFINE(addr_queue, sizeof(struct sockaddr_in), 1, 4);
+K_MSGQ_DEFINE(udp_recv_queue, sizeof(udp_recv_buf), 1, 4);
+K_SEM_DEFINE(net_connected_sem, 0, 1);
 
 static struct {
 	const struct shell *sh;
@@ -86,10 +95,7 @@ static struct {
 	};
 } context;
 
-/* Arducam mega commands https://www.arducam.com/docs/arducam-mega/arducam-mega-getting-started/packs/HostCommunicationProtocol.html*/
-#define COMMAND_MAX_SIZE 6 
 
-static char udp_rx_busy=0;
 
 /*****************Ardum Mega Camera Utilities***************************/
 #include <zephyr/drivers/video.h>
@@ -420,21 +426,21 @@ static void video_preview_work_fn(struct k_work *work)
 		(void)k_work_reschedule(&video_preview_work,K_NO_WAIT);
 }
 
-static int server_addr_construct(void)
-{
-	int err;
+// static int server_addr_construct(void)
+// {
+// 	int err;
 
-	struct sockaddr_in *server4 = ((struct sockaddr_in *)&host_addr);
+// 	struct sockaddr_in *server4 = ((struct sockaddr_in *)&client_addr);
 
-	server4->sin_family = AF_INET;
-	server4->sin_port = htons(CONFIG_UDP_SAMPLE_SERVER_PORT);
-	err = inet_pton(AF_INET, CONFIG_UDP_SAMPLE_SERVER_ADDRESS_STATIC, &server4->sin_addr);
-	if (err < 0) {
-		LOG_ERR("inet_pton, error: %d", -errno);
-		return err;
-	}
-	return 0;
-}
+// 	server4->sin_family = AF_INET;
+// 	server4->sin_port = htons(CONFIG_UDP_SAMPLE_SERVER_PORT);
+// 	err = inet_pton(AF_INET, CONFIG_UDP_SAMPLE_SERVER_ADDRESS_STATIC, &server4->sin_addr);
+// 	if (err < 0) {
+// 		LOG_ERR("inet_pton, error: %d", -errno);
+// 		return err;
+// 	}
+// 	return 0;
+// }
 
 /*LED Blinking: Connecting to network*/
 /*LED ON: Connected to network*/
@@ -569,31 +575,8 @@ static void on_net_event_dhcp_bound(struct net_mgmt_event_callback *cb)
 	const struct net_if_dhcpv4 *dhcpv4 = cb->info;
 	const struct in_addr *addr = &dhcpv4->requested_ip;
 	char dhcp_info[128];
-	struct sockaddr_in bind_addr;
-    int err;
+        //int err;
 
-	fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-	if (fd < 0) {
-		LOG_ERR("Failed to create UDP socket: %d", -errno);
-		FATAL_ERROR();
-		return;
-	}
-	
-	struct timeval read_timeout;
-	read_timeout.tv_sec = 0;
-	read_timeout.tv_usec = 10;
-	setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &read_timeout, sizeof read_timeout);
-
-
-	bind_addr.sin_family = AF_INET;
-	bind_addr.sin_addr.s_addr = htonl(INADDR_ANY);
-	bind_addr.sin_port = htons(CONFIG_UDP_SAMPLE_SERVER_PORT);
-	err =  bind(fd, (struct sockaddr *)&bind_addr, sizeof(bind_addr));
-	if (err < 0) {
-		LOG_ERR("connect, error: %d", -errno);
-		FATAL_ERROR();
-		return;
-	}
 
 	net_addr_ntop(AF_INET, addr, dhcp_info, sizeof(dhcp_info));
 
@@ -604,7 +587,10 @@ static void net_mgmt_event_handler(struct net_mgmt_event_callback *cb,
 {
 	switch (mgmt_event) {
 	case NET_EVENT_IPV4_DHCP_BOUND:
-        on_net_event_dhcp_bound(cb);
+                on_net_event_dhcp_bound(cb);
+                k_sem_give(&net_connected_sem);
+                LOG_INF("given net_connected_sem");
+
 		break;
 	default:
 		break;
@@ -691,9 +677,6 @@ int bytes_from_str(const char *str, uint8_t *bytes, size_t bytes_len)
 int main(void)
 {
 	int ret;
-	uint8_t udp_rx_buf[COMMAND_MAX_SIZE];
-    /* actucal command not count start(0x55) and stop(0xAA) codes*/
-	uint8_t command_buf[COMMAND_MAX_SIZE-2];
 	struct video_buffer *buffers[3];
 	int i = 0;
 
@@ -784,57 +767,140 @@ int main(void)
 	video_stream_stop(video);
 	video_set_ctrl(video, VIDEO_CID_ARDUCAM_RESET, NULL);
 
-	struct sockaddr_in client_addr;
-	socklen_t client_addr_len = sizeof(client_addr);
+	struct sockaddr_in client_address;
+	//socklen_t client_address_len = sizeof(client_address);
+        
+        struct sockaddr_in server_address;
+	//socklen_t server_address_len = sizeof(server_address);
 	char addr_str[32];
 
+        k_msgq_get(&addr_queue, &client_address, K_FOREVER);
+
+        inet_ntop(client_address.sin_family, &client_address.sin_addr,addr_str, sizeof(addr_str));
+        LOG_INF("client IPAddr = %s, Port = %d\n", addr_str, ntohs(client_address.sin_port));
+        
+        fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+	if (fd < 0) {
+		LOG_ERR("Failed to create UDP socket: %d", -errno);
+		FATAL_ERROR();
+		return 0;
+	}
+	
+	server_address.sin_family = AF_INET;
+	server_address.sin_addr.s_addr = htonl(INADDR_ANY);
+	server_address.sin_port = htons(50005);
+        ret =  bind(fd, (struct sockaddr *)&server_address, sizeof(server_address));
+        if (ret < 0) {
+		LOG_ERR("bind, error: %d", -errno);
+		FATAL_ERROR();
+		return 0;
+	}
+
+        client_address.sin_port = htons(60006);
+        ret =  connect(fd, (struct sockaddr *)&client_address, sizeof(struct sockaddr_in));
+        if (ret < 0) {
+                LOG_ERR("connect, error: %d", -errno);
+                FATAL_ERROR();
+                return 0;
+        }
+
+        LOG_INF("Before while");
 	while (1) {
-		//if(udp_rx_busy==0){
-			while(preview_on==1){
-				video_preview();
-				k_msleep(1);
-			}
-			ret = recvfrom(fd, udp_rx_buf, sizeof(udp_rx_buf),0, (struct sockaddr* )&client_addr, &client_addr_len);
-			udp_rx_busy=1;
-			LOG_INF("udp_rx_busy should be 1:%d",udp_rx_busy);
-			LOG_INF("recived udp_rx_buf");
-			if (ret < 0) {
-				LOG_ERR("[%d] Cannot receive udp message (%d)", fd,
-					-errno);
-				return 0;
-			}
-			inet_ntop(client_addr.sin_family, &client_addr.sin_addr,addr_str, sizeof(addr_str));
-			LOG_INF("client IPAddr = %s, Port = %d\n", addr_str, ntohs(client_addr.sin_port));
-			
-			ret =  connect(fd, (struct sockaddr *)&client_addr, sizeof(struct sockaddr_in));
-			
-			if (ret < 0) {
-				LOG_ERR("connect, error: %d", -errno);
-				FATAL_ERROR();
-				return 0;
-			}
-
-			LOG_INF("udp_rx_buf content:");
-			for (size_t i = 0; i < COMMAND_MAX_SIZE; ++i) {
-			printk("%02X ", udp_rx_buf[i]);
-			}
-			printk("\n");
-
-			ret = process_udp_rx_buffer(udp_rx_buf, command_buf);
-			if (ret > 0) {
-				LOG_INF("Valid command reviced. Length:%d Value:",ret);
-				for (uint8_t i = 0; i < ret; i++) {
-					LOG_INF("%02X ", command_buf[i] & 0xFF);
-				}
-				recv_process(command_buf);
-			}else{
-				LOG_INF("No valid command reviced");
-			}
-			udp_rx_busy=0;
-			LOG_INF("udp_rx_busy should be 0:%d",udp_rx_busy);
-		//}
-
+                ret = k_msgq_get(&udp_recv_queue, &udp_recive_buf, K_MSEC(1));
+                if(ret == 0) {
+                        LOG_INF("k_msgq_get");
+                        ret = process_udp_rx_buffer(udp_recive_buf, command_buf);
+                        if (ret > 0) {
+                                LOG_INF("Valid command reviced. Length:%d Value:",ret);
+                                for (uint8_t i = 0; i < ret; i++) {
+                                        LOG_INF("%02X ", command_buf[i] & 0xFF);
+                                }
+                                recv_process(command_buf);
+                        }else{
+                                LOG_INF("No valid command reviced");
+                        }
+                }
+                if(preview_on==1){
+                        video_preview();
+                        //k_msleep(1);
+                }
+                k_yield();
 	}
 
 	return 0;
 }
+
+
+/*
+** Two sockets are use:
+** Client(host):6000 -> Server(nRF7002DK):5000 
+** Client(host):6006 -> Server(nRF7002DK):5005 
+**
+*/
+
+void server_udp_recv(void){
+        int ret;
+        static int fd_host;
+        struct sockaddr_in client_addr;
+        socklen_t client_addr_len;
+        char addr_str[32];
+        
+        k_sem_take(&net_connected_sem, K_FOREVER);
+        LOG_INF("taken net_connected_sem");
+
+        fd_host = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+	if (fd_host < 0) {
+		LOG_ERR("Failed to create UDP socket: %d", -errno);
+		FATAL_ERROR();
+		return;
+	}
+        
+        client_addr.sin_family = AF_INET;
+	client_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+	client_addr.sin_port = htons(50000);
+	
+        ret =  bind(fd_host, (struct sockaddr *)&client_addr, sizeof(client_addr));
+        if (ret < 0) {
+		LOG_ERR("bind, error: %d", -errno);
+		FATAL_ERROR();
+		return;
+	}
+
+        ret = recvfrom(fd_host, udp_recv_buf, sizeof(udp_recv_buf),0, (struct sockaddr* )&client_addr, &client_addr_len);
+	if (ret < 0) {
+		LOG_ERR("recvfrom, error: %d", -errno);
+		FATAL_ERROR();
+		return;
+	}
+
+        inet_ntop(client_addr.sin_family, &client_addr.sin_addr,addr_str, sizeof(addr_str));
+        LOG_INF("Host IPAddr = %s, Port = %d\n", addr_str, ntohs(client_addr.sin_port));
+        k_msgq_put(&addr_queue, &client_addr, K_NO_WAIT);
+
+        LOG_INF("udp_rx_buf content:");
+        for (size_t i = 0; i < COMMAND_MAX_SIZE; ++i) {
+                printk("%02X ", udp_recv_buf[i]);
+        }
+        printk("\n");
+        
+        while(1){
+                
+                ret = recvfrom(fd_host, udp_recv_buf, sizeof(udp_recv_buf),0, (struct sockaddr* )&client_addr, &client_addr_len);
+                LOG_INF("recived udp_rx_buf");
+                if (ret < 0) {
+                        LOG_ERR("[%d] Cannot receive udp message (%d)", fd,
+                                -errno);
+                        return;
+                }
+                k_msgq_put(&udp_recv_queue, &udp_recv_buf, K_NO_WAIT);
+                k_yield();
+        }
+}
+
+/* size of stack area used by each thread */
+#define STACKSIZE 1024
+/* scheduling priority used by each thread */
+#define PRIORITY 7
+
+K_THREAD_DEFINE(server_udp_recv_id, STACKSIZE, server_udp_recv, NULL, NULL, NULL,
+		PRIORITY, 0, 0);
