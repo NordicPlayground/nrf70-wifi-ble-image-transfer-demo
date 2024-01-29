@@ -1,7 +1,6 @@
 import sys
 import socket
 from threading import Thread
-from collections import deque
 from PyQt5.QtCore import Qt, pyqtSignal, QObject
 from PyQt5.QtWidgets import (
     QApplication,
@@ -15,13 +14,183 @@ from PyQt5.QtWidgets import (
     QMessageBox,
     QCompleter,
     QHBoxLayout,
+    QSplitter,
+    QTabWidget,
+    QComboBox
 )
 from PyQt5.QtGui import QPixmap
 from PIL import Image
 from io import BytesIO
 
+class CommandsToCamera:
+    START_CHARACTER = 0x55
+    STOP_CHARACTER = 0xAA
+    
+    COMMANDS = {
+        0xFF: {"name": "RESET_CAMERA", "description": "Reset camera", "parameters": {}},
+        0x01: {"name": "SET_PICTURE_RESOLUTION", "description": "Set picture resolution", "parameters": {"format": None, "resolution": None}},
+        0x02: {"name": "SET_VIDEO_RESOLUTION", "description": "Set video resolution", "parameters": {"resolution": None}},
+        0x03: {"name": "SET_BRIGHTNESS", "description": "Set brightness", "parameters": {"brightness": None}},
+        0x04: {"name": "SET_CONTRAST", "description": "Set contrast", "parameters": {"contrast": None}},
+        0x05: {"name": "SET_SATURATION", "description": "Set saturation", "parameters": {"saturation": None}},
+        0x06: {"name": "SET_EV", "description": "Set EV", "parameters": {"ev": None}},
+        0x07: {"name": "SET_WHITEBALANCE", "description": "Set white balance", "parameters": {"white_balance": None}},
+        0x08: {"name": "SET_SPECIAL_EFFECTS", "description": "Set special effects", "parameters": {"effect": None}},
+        0x09: {"name": "SET_FOCUS_ENABLE", "description": "Set focus enable", "parameters": {"focus_control": None}},
+        0x0A: {"name": "SET_EXPOSURE_GAIN_ENABLE", "description": "Set exposure gain enable", "parameters": {"exposure_control": None}},
+        0x0C: {"name": "SET_WHITE_BALANCE_ENABLE", "description": "Set white balance enable", "parameters": {"white_balance_control": None}},
+        0x0D: {"name": "SET_MANUAL_GAIN", "description": "Set manual gain", "parameters": {"manual_gain": None}},
+        0x0E: {"name": "SET_MANUAL_EXPOSURE", "description": "Set manual exposure", "parameters": {"manual_exposure": None}},
+        0x0F: {"name": "GET_CAMERA_INFO", "description": "Get camera info", "parameters": {}},
+        0x10: {"name": "TAKE_PICTURE", "description": "Take picture", "parameters": {}},
+        0x11: {"name": "SET_SHARPNESS", "description": "Set sharpness", "parameters": {"sharpness": None}},
+        0x12: {"name": "DEBUG_WRITE_REGISTER", "description": "Debug write register", "parameters": {"register": None, "value": None}},
+        0x21: {"name": "STOP_STREAM", "description": "Stop stream", "parameters": {}},
+        0x30: {"name": "GET_FRM_VER_INFO", "description": "Get frame version info", "parameters": {}},
+        0x40: {"name": "GET_SDK_VER_INFO", "description": "Get SDK version info", "parameters": {}},
+        0x50: {"name": "SET_IMAGE_QUALITY", "description": "Set image quality", "parameters": {"quality": None}},
+        0x60: {"name": "SET_LOWPOWER_MODE", "description": "Set low power mode", "parameters": {"mode": None}},
+    }
 
-class ArducamMegaCamera:
+    @staticmethod
+    def get_command_name(command_id):
+        return CommandsToCamera.COMMANDS[command_id]["name"]
+
+    @staticmethod
+    def get_command_description(command_id):
+        return CommandsToCamera.COMMANDS[command_id]["description"]
+
+    @staticmethod
+    def get_command_parameters(command_id):
+        return CommandsToCamera.COMMANDS[command_id]["parameters"]
+    
+    @staticmethod
+    def command_get_camera_info():
+        command_id = 0x0F
+        command_bytes = bytes([CommandsToCamera.START_CHARACTER, command_id, CommandsToCamera.STOP_CHARACTER])
+        command_str = " ".join(format(byte, "02X") for byte in command_bytes)
+        return command_str
+    
+    @staticmethod
+    def command_take_picture():
+        command_id = 0x10
+        command_bytes = bytes([CommandsToCamera.START_CHARACTER, command_id, CommandsToCamera.STOP_CHARACTER])
+        command_str = " ".join(format(byte, "02X") for byte in command_bytes)
+        return command_str
+
+    @staticmethod
+    def command_stop_stream():
+        command_id = 0x21
+        command_bytes = bytes([CommandsToCamera.START_CHARACTER, command_id, CommandsToCamera.STOP_CHARACTER])
+        command_str = " ".join(format(byte, "02X") for byte in command_bytes)
+        return command_str
+    
+# bit[6:4]: Camera data format
+# 1: Indicates that the resolution of the JPEG format is set
+# 2: Indicates the resolution of the RGB565 format
+# 3: Indicates the resolution of the YUV format bit
+# [3:0]: Set the resolution of the camera
+# 0: 160x120
+# 1: 320x240
+# 2: 640x480
+# 3: 800x600
+# 4: 1280x720
+# 5: 1280x960
+# 6: 1600x1200
+# 7: 1920x1080
+# 8: 2048x1536
+# 9: 2592x1944
+    @staticmethod
+    def command_set_picture_resolution(format_code, resolution):
+        command_id = 0x01
+        # Ensure format code is within the valid range
+        if format_code not in (1, 2, 3):
+            raise ValueError("Invalid format code. It must be 1, 2, or 3.")
+        # Ensure resolution code is within the valid range
+        if resolution < 0 or resolution > 9:
+            raise ValueError("Invalid resolution code. It must be between 0 and 9.")
+        # Combine format code and resolution into a single byte
+        parameter_byte = (format_code << 4) | resolution
+        command_bytes = bytes([CommandsToCamera.START_CHARACTER, command_id, parameter_byte, CommandsToCamera.STOP_CHARACTER])
+        command_str = " ".join(format(byte, "02X") for byte in command_bytes)
+        return command_str
+    
+    @staticmethod
+    def command_start_streaming_mode(resolution):
+        command_id = 0x02
+        # Ensure resolution code is within the valid range
+        if resolution not in (1, 2, 3, 4, 5):
+            raise ValueError("Invalid resolution code. It must be 1 or 2.")
+        command_bytes = bytes([CommandsToCamera.START_CHARACTER, command_id, resolution, CommandsToCamera.STOP_CHARACTER])
+        command_str = " ".join(format(byte, "02X") for byte in command_bytes)
+        return command_str
+    
+    @staticmethod
+    def command_set_brightness(brightness):
+        command_id = 0x03
+        # Ensure brightness code is within the valid range
+        if brightness not in range(9):
+            raise ValueError("Invalid brightness code. It must be between 0 and 8.")
+        command_bytes = bytes([CommandsToCamera.START_CHARACTER, command_id, brightness, CommandsToCamera.STOP_CHARACTER])
+        command_str = " ".join(format(byte, "02X") for byte in command_bytes)
+        return command_str
+    
+    @staticmethod
+    def command_set_contrast(contrast):
+        command_id = 0x04
+        # Ensure contrast code is within the valid range
+        if contrast not in range(7):
+            raise ValueError("Invalid contrast code. It must be between 0 and 6.")
+        command_bytes = bytes([CommandsToCamera.START_CHARACTER, command_id, contrast, CommandsToCamera.STOP_CHARACTER])
+        command_str = " ".join(format(byte, "02X") for byte in command_bytes)
+        return command_str
+    
+    @staticmethod
+    def command_set_saturation(saturation):
+        command_id = 0x05
+        # Ensure saturation code is within the valid range
+        if saturation not in range(7):
+            raise ValueError("Invalid saturation code. It must be between 0 and 6.")
+        command_bytes = bytes([CommandsToCamera.START_CHARACTER, command_id, saturation, CommandsToCamera.STOP_CHARACTER])
+        command_str = " ".join(format(byte, "02X") for byte in command_bytes)
+        return command_str
+    
+    @staticmethod
+    def command_set_ev(ev):
+        command_id = 0x06
+        # Ensure ev code is within the valid range
+        if ev not in range(7):
+            raise ValueError("Invalid EV code. It must be between 0 and 6.")
+        command_bytes = bytes([CommandsToCamera.START_CHARACTER, command_id, ev, CommandsToCamera.STOP_CHARACTER])
+        command_str = " ".join(format(byte, "02X") for byte in command_bytes)
+        return command_str
+    
+    @staticmethod
+    def command_set_white_balance(white_balance):
+        command_id = 0x07
+        # Ensure white balance code is within the valid range
+        if white_balance not in range(5):
+            raise ValueError("Invalid white balance code. It must be between 0 and 4.")
+        command_bytes = bytes([CommandsToCamera.START_CHARACTER, command_id, white_balance, CommandsToCamera.STOP_CHARACTER])
+        command_str = " ".join(format(byte, "02X") for byte in command_bytes)
+        return command_str
+    
+    @staticmethod
+    def command_set_special_effects(effect):
+        command_id = 0x08
+        # Ensure effect code is within the valid range
+        if effect not in range(10):
+            raise ValueError("Invalid special effects code. It must be between 0 and 9.")
+        command_bytes = bytes([CommandsToCamera.START_CHARACTER, command_id, effect, CommandsToCamera.STOP_CHARACTER])
+        command_str = " ".join(format(byte, "02X") for byte in command_bytes)
+        return command_str
+    
+    @staticmethod
+    def command_focus_control(focus_control):
+        command_id = 0x09
+        # Ensure focus control code is within the valid range
+
+class ArducamMegaCameraDataProcess:
     def __init__(self):
         pass
 
@@ -62,14 +231,14 @@ class ArducamMegaCamera:
         # Process capture command payload
         print(bytes(frame).hex())
         img = Image.open(BytesIO(frame))
-        img.show()
+        #img.show()
         img.save("received_frame.jpg", "JPEG")
         return f"Capture video command received. Video length: {bytesframe}, VideoFrameData: {frame}"
 
     def process_info_command(self, payload_length, payload):
         # Process info command payload
         info_payload = payload.decode('utf-8')
-        return f"Info command received. Payload length: {payload_length},Payload:{info_payload}"
+        return f"Camera Info received! {info_payload}"
 
     def process_version_command(self, payload):
         # Process version command payload
@@ -104,7 +273,7 @@ class UDPClient(QObject):
         self.server_address = server_address
         self.server_port = server_port
         self.buffer_size = 1024
-        self.camera = ArducamMegaCamera()
+        self.camera = ArducamMegaCameraDataProcess()
         self.udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.udp_socket.bind(('0.0.0.0', 50006))
         self.received_content_text = None  # Placeholder for received content text edit widget
@@ -133,6 +302,7 @@ class UDPClient(QObject):
 
                 # Check if the packet starts with FF AA
                 if data.startswith(b'\xFF\xAA'):
+                    self.command_buffer = b''
                     # Set flag to indicate receiving a command
                     self.in_command = True
 
@@ -160,22 +330,35 @@ class UDPClient(QObject):
             QMessageBox.critical(None, "Error", str(e))
 
 
-class WIFI_CAM_GUI(QMainWindow):
+class WifiCamHostGUI(QMainWindow):
+    IMAGE_RESOLUTION_OPTIONS = {
+        0: "160x120",
+        1: "320x240",
+        2: "640x480",
+        3: "800x600",
+        4: "1280x720",
+        5: "1280x960",
+        6: "1600x1200",
+        7: "1920x1080",
+        8: "2048x1536",
+        9: "2592x1944"
+    }
+    
     def __init__(self):
         super().__init__()
+        self.resize(1200, 900)
         self.setWindowTitle("WiFi Camera Host")
+        self.target_server = ('192.168.1.144', 50000)
+        self.client = UDPClient(*self.target_server)
+        self.commands=CommandsToCamera()
 
         # Define pre-filled commands
-        pre_filled_commands = ['55 0F AA', '55 10 AA']
+        pre_filled_commands = [self.commands.command_get_camera_info(),self.commands.command_take_picture()]
 
-        self.target_server = ('192.168.1.144', 50000)
-        self.client = WIFI_CAM_GUI(*self.target_server)
+
         # Initialize UDPClient with pre-filled commands
         # self.client.last_commands.extend(pre_filled_commands)
-        self.create_target_server_input()
-        self.create_send_command_window(pre_filled_commands)
-        self.create_received_content_window()
-        self.create_video_frame_window()
+        self.create_layout(pre_filled_commands)
 
         # Connect command receiving signal to process_received_packets slot
         self.client.command_receiving_signal.connect(self.process_received_packets)
@@ -185,24 +368,113 @@ class WIFI_CAM_GUI(QMainWindow):
         receive_thread.daemon = True
         receive_thread.start()
 
-    def create_target_server_input(self):
-        self.target_server_widget = QWidget()
+    def create_layout(self, pre_filled_commands):
+        main_widget = QWidget()
         layout = QVBoxLayout()
+        splitter = QSplitter(Qt.Horizontal)
 
-        label = QLabel("Target WiFi Camera Address:(e.g., 192.168.1.144:50000, which can be found in device log.):")
-        layout.addWidget(label)
+        # Left side: Display received image
+        self.video_frame_widget = QWidget()
+        self.video_frame_widget.resize(800, 600)
+        self.video_frame_widget.setStyleSheet("background-color: gray;")
+        self.video_frame_widget.setWindowTitle("Video Window")
+
+        video_frame_layout = QVBoxLayout()
+        self.video_frame_label = QLabel("Video/Image will show here!")
+        video_frame_layout.addWidget(self.video_frame_label)
+        self.video_frame_widget.setLayout(video_frame_layout)
+        splitter.addWidget(self.video_frame_widget)
+
+        # Right side: Two parts (setting_window and log_window)
+        right_side_widget = QWidget()
+        right_side_layout = QVBoxLayout()
+
+        self.connect_window(right_side_layout)
+        self.capture_window(right_side_layout)  # Added Capture Window
+        self.command_input_window(right_side_layout, pre_filled_commands)
+        self.log_window(right_side_layout)
+
+        right_side_widget.setLayout(right_side_layout)
+        splitter.addWidget(right_side_widget)
+
+        layout.addWidget(splitter)
+        main_widget.setLayout(layout)
+        self.setCentralWidget(main_widget)
+
+    def connect_window(self, layout):
+        add_widget = QWidget()
+        layout.addWidget(add_widget)
+
+        layout_add = QVBoxLayout()
+        add_widget.setLayout(layout_add)
+
+        label_add = QLabel("Target WiFi Camera Address")
+        layout_add.addWidget(label_add)
 
         self.target_server_entry = QLineEdit(f"{self.target_server[0]}:{self.target_server[1]}")
-        layout.addWidget(self.target_server_entry)
+        self.target_server_entry.placeholderText = ("e.g., 192.168.1.144:50000, which can be found in device log")
+        layout_add.addWidget(self.target_server_entry)
 
-        self.target_server_widget.setLayout(layout)
-        self.setCentralWidget(self.target_server_widget)
+        connect_button = QPushButton("Connect")
+        connect_button.clicked.connect(self.connect_to_camera)
+        layout_add.addWidget(connect_button)
 
-    def create_send_command_window(self, pre_filled_commands):
-        self.send_command_widget = QWidget()
-        layout = QVBoxLayout()
+    def capture_window(self, layout):
+        capture_tab = QTabWidget()
+        layout.addWidget(capture_tab)
 
-        label = QLabel("Enter Command (e.g., 55 0F AA):")
+        # Video Tab
+        video_tab = QWidget()
+        video_layout = QVBoxLayout()
+
+        video_size_layout = QHBoxLayout()  # New layout for video size
+        video_size_label = QLabel("Video Size:")
+        video_size_layout.addWidget(video_size_label)
+        self.video_size_combobox = QComboBox()
+        self.video_size_combobox.addItems(["96x96", "320x240", "320x320", "640x480"])
+        video_size_layout.addWidget(self.video_size_combobox)
+        video_layout.addLayout(video_size_layout)  # Add the video size layout to the main video layout
+
+        # Add Capture Video Button
+        capture_video_button = QPushButton("Capture Video")
+        capture_video_button.clicked.connect(self.capture_video)
+        video_layout.addWidget(capture_video_button)
+
+        video_tab.setLayout(video_layout)
+        capture_tab.addTab(video_tab, "Video")
+
+        # Image Tab
+        image_tab = QWidget()
+        image_layout = QVBoxLayout()
+
+        # Image Format Layout
+        image_format_layout = QHBoxLayout()
+        image_format_label = QLabel("Image Format:")
+        image_format_layout.addWidget(image_format_label)
+        self.image_format_combobox = QComboBox()
+        self.image_format_combobox.addItems(["JPEG", "RGB", "YUV"])
+        image_format_layout.addWidget(self.image_format_combobox)
+        image_layout.addLayout(image_format_layout)
+
+        # Image Size Layout
+        image_size_layout = QHBoxLayout()
+        image_size_label = QLabel("Image Size:")
+        image_size_layout.addWidget(image_size_label)
+        self.image_size_combobox = QComboBox()
+        self.image_size_combobox.addItems([size for _, size in self.IMAGE_RESOLUTION_OPTIONS.items()])
+        image_size_layout.addWidget(self.image_size_combobox)
+        image_layout.addLayout(image_size_layout)
+
+        # Add Capture Image Button
+        capture_image_button = QPushButton("Capture Image")
+        capture_image_button.clicked.connect(self.capture_image)
+        image_layout.addWidget(capture_image_button)
+
+        image_tab.setLayout(image_layout)
+        capture_tab.addTab(image_tab, "Image")
+
+    def command_input_window(self, layout, pre_filled_commands):
+        label = QLabel("Commands:")
         layout.addWidget(label)
 
         # Initialize QCompleter with pre-filled commands
@@ -215,34 +487,16 @@ class WIFI_CAM_GUI(QMainWindow):
         send_button.clicked.connect(self.send_command)
         layout.addWidget(send_button)
 
-        self.send_command_widget.setLayout(layout)
-        self.target_server_widget.layout().addWidget(self.send_command_widget)
-
-    def create_received_content_window(self):
-        self.received_content_widget = QWidget()
-        layout = QVBoxLayout()
-
+    def log_window(self, layout):
         label = QLabel("Received Content:")
         layout.addWidget(label)
 
         self.client.received_content_text = QTextEdit()  # Set the text edit widget in client
         layout.addWidget(self.client.received_content_text)
 
-        self.received_content_widget.setLayout(layout)
-        self.target_server_widget.layout().addWidget(self.received_content_widget)
-
-    def create_video_frame_window(self):
-        self.video_frame_widget = QWidget()
-        layout = QVBoxLayout()
-
-        label = QLabel("Video Frame:")
-        layout.addWidget(label)
-
-        self.video_frame_label = QLabel()
-        layout.addWidget(self.video_frame_label)
-
-        self.video_frame_widget.setLayout(layout)
-        self.target_server_widget.layout().addWidget(self.video_frame_widget)
+        clear_button = QPushButton("Clear Log")
+        clear_button.clicked.connect(self.clear_log)
+        layout.addWidget(clear_button)
 
     def send_command(self):
         command_str = self.command_entry.text()
@@ -271,9 +525,34 @@ class WIFI_CAM_GUI(QMainWindow):
             pixmap = QPixmap(img_path)
             self.video_frame_label.setPixmap(pixmap)
 
+    def connect_to_camera(self):
+        address = self.target_server_entry.text()
+        if ':' not in address:
+            QMessageBox.critical(None, "Error", "Invalid address format. Use IP:Port.")
+            return
+        ip, port = address.split(':')
+        try:
+            port = int(port)
+        except ValueError:
+            QMessageBox.critical(None, "Error", "Invalid port number.")
+            return
+        self.client.send_command(self.commands.command_get_camera_info())
+
+    def capture_video(self):
+        self.client.send_command(self.commands.command_start_streaming_mode(2))
+
+    def capture_image(self):
+        resolution_number = list(self.IMAGE_RESOLUTION_OPTIONS.keys())[list(self.IMAGE_RESOLUTION_OPTIONS.values()).index(self.image_size_combobox.currentText())]
+        self.client.send_command(self.commands.command_set_picture_resolution(1,resolution_number))
+        self.client.send_command(self.commands.command_take_picture())
+
+    def clear_log(self):
+        if self.client.received_content_text:
+            self.client.received_content_text.clear()
+
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    window = UDPClientGUI()
+    window = WifiCamHostGUI()
     window.show()
     sys.exit(app.exec_())

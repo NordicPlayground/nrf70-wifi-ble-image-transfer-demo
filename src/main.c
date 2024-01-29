@@ -67,9 +67,11 @@ static struct sockaddr_storage host_addr;
 
 /* Forward declarations */
 static void server_transmission_work_fn(struct k_work *work);
+static void video_preview_work_fn(struct k_work *work);
 
 /* Work item used to schedule periodic UDP transmissions. */
 static K_WORK_DELAYABLE_DEFINE(server_transmission_work, server_transmission_work_fn);
+static K_WORK_DELAYABLE_DEFINE(video_preview_work, video_preview_work_fn);
 
 static struct {
 	const struct shell *sh;
@@ -86,6 +88,287 @@ static struct {
 
 /* Arducam mega commands https://www.arducam.com/docs/arducam-mega/arducam-mega-getting-started/packs/HostCommunicationProtocol.html*/
 #define COMMAND_MAX_SIZE 6 
+
+static char udp_rx_busy=0;
+
+/*****************Ardum Mega Camera Utilities***************************/
+#include <zephyr/drivers/video.h>
+#include <zephyr/drivers/video/arducam_mega.h>
+#include <zephyr/device.h>
+
+static uint8_t head_and_tail[] = {0xff, 0xaa, 0x00, 0xff, 0xbb};
+
+#define RESET_CAMERA             0XFF
+#define SET_PICTURE_RESOLUTION   0X01
+#define SET_VIDEO_RESOLUTION     0X02
+#define SET_BRIGHTNESS           0X03
+#define SET_CONTRAST             0X04
+#define SET_SATURATION           0X05
+#define SET_EV                   0X06
+#define SET_WHITEBALANCE         0X07
+#define SET_SPECIAL_EFFECTS      0X08
+#define SET_FOCUS_ENABLE         0X09
+#define SET_EXPOSURE_GAIN_ENABLE 0X0A
+#define SET_WHITE_BALANCE_ENABLE 0X0C
+#define SET_MANUAL_GAIN          0X0D
+#define SET_MANUAL_EXPOSURE      0X0E
+#define GET_CAMERA_INFO          0X0F
+#define TAKE_PICTURE             0X10
+#define SET_SHARPNESS            0X11
+#define DEBUG_WRITE_REGISTER     0X12
+#define STOP_STREAM              0X21
+#define GET_FRM_VER_INFO         0X30
+#define GET_SDK_VER_INFO         0X40
+#define SET_IMAGE_QUALITY        0X50
+#define SET_LOWPOWER_MODE        0X60
+
+const struct device *video;
+struct video_buffer *vbuf;
+
+volatile uint8_t preview_on;
+volatile uint8_t capture_flag;
+
+const uint32_t pixel_format_table[] = {
+	VIDEO_PIX_FMT_JPEG,
+	VIDEO_PIX_FMT_RGB565,
+	VIDEO_PIX_FMT_YUYV,
+};
+
+const uint16_t resolution_table[][2] = {
+	{160, 120},  {320, 240},   {640, 480},   {800, 600},   {1280, 720},
+	{1280, 960}, {1600, 1200}, {1920, 1080}, {2048, 1536}, {2592, 1944},
+	{96, 96},    {128, 128},   {320, 320},
+};
+
+const uint8_t resolution_num = sizeof(resolution_table) / 4;
+
+static uint8_t current_resolution;
+static uint8_t target_resolution;
+static uint8_t take_picture_fmt = 0x1a;
+
+void cam_to_host_command_send(uint8_t type, uint8_t *buffer, uint32_t length)
+{
+	head_and_tail[2] = type;
+	send(fd,  &head_and_tail[0], 3, 0);
+	send(fd,  (uint8_t *)&length, 4, 0);
+	send(fd,  buffer, length, 0);
+	send(fd,  &head_and_tail[3], 2, 0);
+}
+
+int set_mega_resolution(uint8_t sfmt)
+{
+	uint8_t resolution = sfmt & 0x0f;
+	uint8_t pixelformat = (sfmt & 0x70) >> 4;
+
+	if (resolution > resolution_num || pixelformat > 3) {
+		return -1;
+	}
+	struct video_format fmt = {.width = resolution_table[resolution][0],
+				   .height = resolution_table[resolution][1],
+				   .pixelformat = pixel_format_table[pixelformat - 1]};
+	current_resolution = resolution;
+	return video_set_format(video, VIDEO_EP_OUT, &fmt);
+}
+
+int take_picture(void)
+{
+	int err;
+	enum video_frame_fragmented_status f_status;
+
+	err = video_dequeue(video, VIDEO_EP_OUT, &vbuf, K_FOREVER);
+	if (err) {
+		LOG_ERR("Unable to dequeue video buf");
+		return -1;
+	}
+
+	f_status = vbuf->flags;
+
+	head_and_tail[2] = 0x01;
+	send(fd, &head_and_tail[0], 3, 0);
+	send(fd, (uint8_t *)&vbuf->bytesframe, 4, 0);
+
+	target_resolution=(((current_resolution & 0x0f) << 4)|0x01);
+	send(fd, &target_resolution, 1, 0);
+	
+	send(fd, vbuf->buffer, vbuf->bytesused, 0);
+
+	video_enqueue(video, VIDEO_EP_OUT, vbuf);
+	while (f_status == VIDEO_BUF_FRAG) {
+		video_dequeue(video, VIDEO_EP_OUT, &vbuf, K_FOREVER);
+		f_status = vbuf->flags;
+		send(fd, vbuf->buffer, vbuf->bytesused, 0);
+		video_enqueue(video, VIDEO_EP_OUT, vbuf);
+	}
+	send(fd, &head_and_tail[3], 2, 0);
+
+	return 0;
+}
+
+void video_preview(void)
+{
+	int err;
+	enum video_frame_fragmented_status f_status;
+	if (!preview_on) {
+		return;
+	}
+	err = video_dequeue(video, VIDEO_EP_OUT, &vbuf, K_FOREVER);
+	if (err) {
+		LOG_INF("Unable to dequeue video buf");
+		return;
+	}
+	f_status = vbuf->flags;
+	LOG_INF("f_status%d",f_status);
+	if (capture_flag == 1) {
+		capture_flag = 0;
+		head_and_tail[2] = 0x01;
+		send(fd, &head_and_tail[0], 3, 0);
+		send(fd, (uint8_t *)&vbuf->bytesframe, 4, 0);
+		target_resolution=(((current_resolution & 0x0f) << 4)|0x01);
+		send(fd, &target_resolution, 1, 0);
+	}
+
+	send(fd, vbuf->buffer, vbuf->bytesused, 0);
+
+	if (f_status == VIDEO_BUF_EOF) {
+		send(fd, &head_and_tail[3], 2, 0);
+		capture_flag = 1;
+	}
+
+	err = video_enqueue(video, VIDEO_EP_OUT, vbuf);
+	if (err) {
+		LOG_ERR("Unable to requeue video buf");
+		return;
+	}
+}
+
+int report_mega_info(void)
+{
+	char str_buf[400];
+	uint32_t str_len;
+	char *mega_type;
+	struct arducam_mega_info mega_info;
+
+	video_get_ctrl(video, VIDEO_CID_ARDUCAM_INFO, &mega_info);
+
+	switch (mega_info.camera_id) {
+	case ARDUCAM_SENSOR_3MP_1:
+	case ARDUCAM_SENSOR_3MP_2:
+		mega_type = "3MP";
+		break;
+	case ARDUCAM_SENSOR_5MP_1:
+		mega_type = "5MP";
+		break;
+	case ARDUCAM_SENSOR_5MP_2:
+		mega_type = "5MP_2";
+		break;
+	default:
+		return -ENODEV;
+	}
+
+	sprintf(str_buf,
+		"ReportCameraInfo\r\nCamera Type:%s\r\n"
+		"Camera Support Resolution:%d\r\nCamera Support "
+		"special effects:%d\r\nCamera Support Focus:%d\r\n"
+		"Camera Exposure Value Max:%ld\r\nCamera Exposure Value "
+		"Min:%d\r\nCamera Gain Value Max:%d\r\nCamera Gain Value "
+		"Min:%d\r\nCamera Support Sharpness:%d\r\n",
+		mega_type, mega_info.support_resolution, mega_info.support_special_effects,
+		mega_info.enable_focus, mega_info.exposure_value_max, mega_info.exposure_value_min,
+		mega_info.gain_value_max, mega_info.gain_value_min, mega_info.enable_sharpness);
+	LOG_INF("%s",str_buf);
+	str_len = strlen(str_buf);
+	cam_to_host_command_send(0x02, str_buf, str_len);
+	return 0;
+}
+
+uint8_t recv_process(uint8_t *buff)
+{
+	switch (buff[0]) {
+	case SET_PICTURE_RESOLUTION:
+		if (set_mega_resolution(buff[1]) == 0) {
+			take_picture_fmt = buff[1];
+		}
+		break;
+	case SET_VIDEO_RESOLUTION:
+		LOG_INF("SET_VIDEO_RESOLUTION");
+		if (preview_on == 0) {
+			LOG_INF("SET_VIDEO_RESOLUTION preview_on");
+			set_mega_resolution(buff[1] | 0x10);
+			LOG_INF("video_stream_start");
+			video_stream_start(video);
+			//(void)k_work_schedule(&video_preview_work,K_NO_WAIT);
+			capture_flag = 1;
+		}
+		preview_on = 1;
+		break;
+	case SET_BRIGHTNESS:
+		video_set_ctrl(video, VIDEO_CID_CAMERA_BRIGHTNESS, &buff[1]);
+		break;
+	case SET_CONTRAST:
+		video_set_ctrl(video, VIDEO_CID_CAMERA_CONTRAST, &buff[1]);
+		break;
+	case SET_SATURATION:
+		video_set_ctrl(video, VIDEO_CID_CAMERA_SATURATION, &buff[1]);
+		break;
+	case SET_EV:
+		video_set_ctrl(video, VIDEO_CID_ARDUCAM_EV, &buff[1]);
+		break;
+	case SET_WHITEBALANCE:
+		video_set_ctrl(video, VIDEO_CID_CAMERA_WHITE_BAL, &buff[1]);
+		break;
+	case SET_SPECIAL_EFFECTS:
+		video_set_ctrl(video, VIDEO_CID_ARDUCAM_COLOR_FX, &buff[1]);
+		break;
+	case SET_EXPOSURE_GAIN_ENABLE:
+		video_set_ctrl(video, VIDEO_CID_CAMERA_EXPOSURE_AUTO, &buff[1]);
+		video_set_ctrl(video, VIDEO_CID_CAMERA_GAIN_AUTO, &buff[1]);
+	case SET_WHITE_BALANCE_ENABLE:
+		video_set_ctrl(video, VIDEO_CID_CAMERA_WHITE_BAL_AUTO, &buff[1]);
+		break;
+	case SET_SHARPNESS:
+		video_set_ctrl(video, VIDEO_CID_ARDUCAM_SHARPNESS, &buff[1]);
+		break;
+	case SET_MANUAL_GAIN:
+		uint16_t gain_value = (buff[1] << 8) | buff[2];
+
+		video_set_ctrl(video, VIDEO_CID_CAMERA_GAIN, &gain_value);
+		break;
+	case SET_MANUAL_EXPOSURE:
+		uint32_t exposure_value = (buff[1] << 16) | (buff[2] << 8) | buff[3];
+
+		video_set_ctrl(video, VIDEO_CID_CAMERA_EXPOSURE, &exposure_value);
+		break;
+	case GET_CAMERA_INFO:
+		report_mega_info();
+		break;
+	case TAKE_PICTURE:
+		video_stream_start(video);
+		take_picture();
+		video_stream_stop(video);
+		break;
+	case STOP_STREAM:
+		if (preview_on) {
+			send(fd, &head_and_tail[3], 2, 0);
+			video_stream_stop(video);
+			set_mega_resolution(take_picture_fmt);
+		}
+		preview_on = 0;
+		break;
+	case RESET_CAMERA:
+		video_set_ctrl(video, VIDEO_CID_ARDUCAM_RESET, NULL);
+		break;
+	case SET_IMAGE_QUALITY:
+		video_set_ctrl(video, VIDEO_CID_JPEG_COMPRESSION_QUALITY, &buff[1]);
+		break;
+	case SET_LOWPOWER_MODE:
+		video_set_ctrl(video, VIDEO_CID_ARDUCAM_LOWPOWER, &buff[1]);
+		break;
+	default:
+		break;
+	}
+
+	return buff[0];
+}
 
 uint8_t process_udp_rx_buffer(char *udp_rx_buf, char *command_buf) {
     uint8_t command_length = 0;
@@ -129,6 +412,12 @@ static void server_transmission_work_fn(struct k_work *work)
 
 	//  (void)k_work_reschedule(&server_transmission_work,
 	//  			K_SECONDS(CONFIG_UDP_SAMPLE_DATA_UPLOAD_FREQUENCY_SECONDS));
+}
+
+static void video_preview_work_fn(struct k_work *work)
+{		LOG_INF("video_preview");
+		video_preview();
+		(void)k_work_reschedule(&video_preview_work,K_NO_WAIT);
 }
 
 static int server_addr_construct(void)
@@ -289,6 +578,12 @@ static void on_net_event_dhcp_bound(struct net_mgmt_event_callback *cb)
 		FATAL_ERROR();
 		return;
 	}
+	
+	struct timeval read_timeout;
+	read_timeout.tv_sec = 0;
+	read_timeout.tv_usec = 10;
+	setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &read_timeout, sizeof read_timeout);
+
 
 	bind_addr.sin_family = AF_INET;
 	bind_addr.sin_addr.s_addr = htonl(INADDR_ANY);
@@ -392,243 +687,6 @@ int bytes_from_str(const char *str, uint8_t *bytes, size_t bytes_len)
 	return 0;
 }
 
-/*****************Ardum Mega Camera Utilities***************************/
-#include <zephyr/drivers/video.h>
-#include <zephyr/drivers/video/arducam_mega.h>
-#include <zephyr/device.h>
-
-static uint8_t head_and_tail[] = {0xff, 0xaa, 0x00, 0xff, 0xbb};
-
-#define RESET_CAMERA             0XFF
-#define SET_PICTURE_RESOLUTION   0X01
-#define SET_VIDEO_RESOLUTION     0X02
-#define SET_BRIGHTNESS           0X03
-#define SET_CONTRAST             0X04
-#define SET_SATURATION           0X05
-#define SET_EV                   0X06
-#define SET_WHITEBALANCE         0X07
-#define SET_SPECIAL_EFFECTS      0X08
-#define SET_FOCUS_ENABLE         0X09
-#define SET_EXPOSURE_GAIN_ENABLE 0X0A
-#define SET_WHITE_BALANCE_ENABLE 0X0C
-#define SET_MANUAL_GAIN          0X0D
-#define SET_MANUAL_EXPOSURE      0X0E
-#define GET_CAMERA_INFO          0X0F
-#define TAKE_PICTURE             0X10
-#define SET_SHARPNESS            0X11
-#define DEBUG_WRITE_REGISTER     0X12
-#define STOP_STREAM              0X21
-#define GET_FRM_VER_INFO         0X30
-#define GET_SDK_VER_INFO         0X40
-#define SET_IMAGE_QUALITY        0X50
-#define SET_LOWPOWER_MODE        0X60
-
-const struct device *video;
-struct video_buffer *vbuf;
-
-volatile uint8_t preview_on;
-volatile uint8_t capture_flag;
-
-const uint32_t pixel_format_table[] = {
-	VIDEO_PIX_FMT_JPEG,
-	VIDEO_PIX_FMT_RGB565,
-	VIDEO_PIX_FMT_YUYV,
-};
-
-const uint16_t resolution_table[][2] = {
-	{160, 120},  {320, 240},   {640, 480},   {800, 600},   {1280, 720},
-	{1280, 960}, {1600, 1200}, {1920, 1080}, {2048, 1536}, {2592, 1944},
-	{96, 96},    {128, 128},   {320, 320},
-};
-
-const uint8_t resolution_num = sizeof(resolution_table) / 4;
-
-static uint8_t current_resolution;
-static uint8_t target_resolution;
-static uint8_t take_picture_fmt = 0x1a;
-
-void cam_to_host_command_send(uint8_t type, uint8_t *buffer, uint32_t length)
-{
-	head_and_tail[2] = type;
-	send(fd,  &head_and_tail[0], 3, 0);
-	send(fd,  (uint8_t *)&length, 4, 0);
-	send(fd,  buffer, length, 0);
-	send(fd,  &head_and_tail[3], 2, 0);
-}
-
-int set_mega_resolution(uint8_t sfmt)
-{
-	uint8_t resolution = sfmt & 0x0f;
-	uint8_t pixelformat = (sfmt & 0x70) >> 4;
-
-	if (resolution > resolution_num || pixelformat > 3) {
-		return -1;
-	}
-	struct video_format fmt = {.width = resolution_table[resolution][0],
-				   .height = resolution_table[resolution][1],
-				   .pixelformat = pixel_format_table[pixelformat - 1]};
-	current_resolution = resolution;
-	return video_set_format(video, VIDEO_EP_OUT, &fmt);
-}
-
-int take_picture(void)
-{
-	int err;
-	enum video_frame_fragmented_status f_status;
-
-	err = video_dequeue(video, VIDEO_EP_OUT, &vbuf, K_FOREVER);
-	if (err) {
-		LOG_ERR("Unable to dequeue video buf");
-		return -1;
-	}
-
-	f_status = vbuf->flags;
-
-	head_and_tail[2] = 0x01;
-	send(fd, &head_and_tail[0], 3, 0);
-	send(fd, (uint8_t *)&vbuf->bytesframe, 4, 0);
-
-	target_resolution=(((current_resolution & 0x0f) << 4)|0x01);
-	send(fd, &target_resolution, 1, 0);
-	
-	send(fd, vbuf->buffer, vbuf->bytesused, 0);
-
-	video_enqueue(video, VIDEO_EP_OUT, vbuf);
-	while (f_status == VIDEO_BUF_FRAG) {
-		video_dequeue(video, VIDEO_EP_OUT, &vbuf, K_FOREVER);
-		f_status = vbuf->flags;
-		send(fd, vbuf->buffer, vbuf->bytesused, 0);
-		video_enqueue(video, VIDEO_EP_OUT, vbuf);
-	}
-	send(fd, &head_and_tail[3], 2, 0);
-
-	return 0;
-}
-
-int report_mega_info(void)
-{
-	char str_buf[400];
-	uint32_t str_len;
-	char *mega_type;
-	struct arducam_mega_info mega_info;
-
-	video_get_ctrl(video, VIDEO_CID_ARDUCAM_INFO, &mega_info);
-
-	switch (mega_info.camera_id) {
-	case ARDUCAM_SENSOR_3MP_1:
-	case ARDUCAM_SENSOR_3MP_2:
-		mega_type = "3MP";
-		break;
-	case ARDUCAM_SENSOR_5MP_1:
-		mega_type = "5MP";
-		break;
-	case ARDUCAM_SENSOR_5MP_2:
-		mega_type = "5MP_2";
-		break;
-	default:
-		return -ENODEV;
-	}
-
-	sprintf(str_buf,
-		"ReportCameraInfo\r\nCamera Type:%s\r\n"
-		"Camera Support Resolution:%d\r\nCamera Support "
-		"special effects:%d\r\nCamera Support Focus:%d\r\n"
-		"Camera Exposure Value Max:%ld\r\nCamera Exposure Value "
-		"Min:%d\r\nCamera Gain Value Max:%d\r\nCamera Gain Value "
-		"Min:%d\r\nCamera Support Sharpness:%d\r\n",
-		mega_type, mega_info.support_resolution, mega_info.support_special_effects,
-		mega_info.enable_focus, mega_info.exposure_value_max, mega_info.exposure_value_min,
-		mega_info.gain_value_max, mega_info.gain_value_min, mega_info.enable_sharpness);
-	LOG_INF("%s",str_buf);
-	str_len = strlen(str_buf);
-	cam_to_host_command_send(0x02, str_buf, str_len);
-	return 0;
-}
-
-uint8_t recv_process(uint8_t *buff)
-{
-	switch (buff[0]) {
-	case SET_PICTURE_RESOLUTION:
-		if (set_mega_resolution(buff[1]) == 0) {
-			take_picture_fmt = buff[1];
-		}
-		break;
-	case SET_VIDEO_RESOLUTION:
-		if (preview_on == 0) {
-			set_mega_resolution(buff[1] | 0x10);
-			video_stream_start(video);
-			capture_flag = 1;
-		}
-		preview_on = 1;
-		break;
-	case SET_BRIGHTNESS:
-		video_set_ctrl(video, VIDEO_CID_CAMERA_BRIGHTNESS, &buff[1]);
-		break;
-	case SET_CONTRAST:
-		video_set_ctrl(video, VIDEO_CID_CAMERA_CONTRAST, &buff[1]);
-		break;
-	case SET_SATURATION:
-		video_set_ctrl(video, VIDEO_CID_CAMERA_SATURATION, &buff[1]);
-		break;
-	case SET_EV:
-		video_set_ctrl(video, VIDEO_CID_ARDUCAM_EV, &buff[1]);
-		break;
-	case SET_WHITEBALANCE:
-		video_set_ctrl(video, VIDEO_CID_CAMERA_WHITE_BAL, &buff[1]);
-		break;
-	case SET_SPECIAL_EFFECTS:
-		video_set_ctrl(video, VIDEO_CID_ARDUCAM_COLOR_FX, &buff[1]);
-		break;
-	case SET_EXPOSURE_GAIN_ENABLE:
-		video_set_ctrl(video, VIDEO_CID_CAMERA_EXPOSURE_AUTO, &buff[1]);
-		video_set_ctrl(video, VIDEO_CID_CAMERA_GAIN_AUTO, &buff[1]);
-	case SET_WHITE_BALANCE_ENABLE:
-		video_set_ctrl(video, VIDEO_CID_CAMERA_WHITE_BAL_AUTO, &buff[1]);
-		break;
-	case SET_SHARPNESS:
-		video_set_ctrl(video, VIDEO_CID_ARDUCAM_SHARPNESS, &buff[1]);
-		break;
-	case SET_MANUAL_GAIN:
-		uint16_t gain_value = (buff[1] << 8) | buff[2];
-
-		video_set_ctrl(video, VIDEO_CID_CAMERA_GAIN, &gain_value);
-		break;
-	case SET_MANUAL_EXPOSURE:
-		uint32_t exposure_value = (buff[1] << 16) | (buff[2] << 8) | buff[3];
-
-		video_set_ctrl(video, VIDEO_CID_CAMERA_EXPOSURE, &exposure_value);
-		break;
-	case GET_CAMERA_INFO:
-		report_mega_info();
-		break;
-	case TAKE_PICTURE:
-		video_stream_start(video);
-		take_picture();
-		video_stream_stop(video);
-		break;
-	case STOP_STREAM:
-		if (preview_on) {
-			send(fd, &head_and_tail[3], 2, 0);
-			video_stream_stop(video);
-			set_mega_resolution(take_picture_fmt);
-		}
-		preview_on = 0;
-		break;
-	case RESET_CAMERA:
-		video_set_ctrl(video, VIDEO_CID_ARDUCAM_RESET, NULL);
-		break;
-	case SET_IMAGE_QUALITY:
-		video_set_ctrl(video, VIDEO_CID_JPEG_COMPRESSION_QUALITY, &buff[1]);
-		break;
-	case SET_LOWPOWER_MODE:
-		video_set_ctrl(video, VIDEO_CID_ARDUCAM_LOWPOWER, &buff[1]);
-		break;
-	default:
-		break;
-	}
-
-	return buff[0];
-}
 
 int main(void)
 {
@@ -726,48 +784,55 @@ int main(void)
 	video_stream_stop(video);
 	video_set_ctrl(video, VIDEO_CID_ARDUCAM_RESET, NULL);
 
-	LOG_INF("waiting for udp_rx_buf123");
-	LOG_INF("waiting for udp_rx_buf456");
-
 	struct sockaddr_in client_addr;
 	socklen_t client_addr_len = sizeof(client_addr);
 	char addr_str[32];
 
 	while (1) {
-		ret = recvfrom(fd, udp_rx_buf, sizeof(udp_rx_buf),0, (struct sockaddr* )&client_addr, &client_addr_len);
-		LOG_INF("recived udp_rx_buf");
-		if (ret < 0) {
-			LOG_ERR("[%d] Cannot receive udp message (%d)", fd,
-				-errno);
-			return 0;
-		}
-		inet_ntop(client_addr.sin_family, &client_addr.sin_addr,addr_str, sizeof(addr_str));
-		LOG_INF("client IPAddr = %s, Port = %d\n", addr_str, ntohs(client_addr.sin_port));
-		
-		ret =  connect(fd, (struct sockaddr *)&client_addr, sizeof(struct sockaddr_in));
-		
-		if (ret < 0) {
-			LOG_ERR("connect, error: %d", -errno);
-			FATAL_ERROR();
-			return;
-		}
-
-		LOG_INF("udp_rx_buf content:");
-		for (size_t i = 0; i < COMMAND_MAX_SIZE; ++i) {
-        printk("%02X ", udp_rx_buf[i]);
-		}
-		printk("\n");
-
-		ret = process_udp_rx_buffer(udp_rx_buf, command_buf);
-		if (ret > 0) {
-			LOG_INF("Valid command reviced. Length:%d Value:",ret);
-			for (uint8_t i = 0; i < ret; i++) {
-				LOG_INF("%02X ", command_buf[i] & 0xFF);
+		//if(udp_rx_busy==0){
+			while(preview_on==1){
+				video_preview();
+				k_msleep(1);
 			}
-			recv_process(command_buf);
-		}else{
-			LOG_INF("No valid command reviced");
-		}
+			ret = recvfrom(fd, udp_rx_buf, sizeof(udp_rx_buf),0, (struct sockaddr* )&client_addr, &client_addr_len);
+			udp_rx_busy=1;
+			LOG_INF("udp_rx_busy should be 1:%d",udp_rx_busy);
+			LOG_INF("recived udp_rx_buf");
+			if (ret < 0) {
+				LOG_ERR("[%d] Cannot receive udp message (%d)", fd,
+					-errno);
+				return 0;
+			}
+			inet_ntop(client_addr.sin_family, &client_addr.sin_addr,addr_str, sizeof(addr_str));
+			LOG_INF("client IPAddr = %s, Port = %d\n", addr_str, ntohs(client_addr.sin_port));
+			
+			ret =  connect(fd, (struct sockaddr *)&client_addr, sizeof(struct sockaddr_in));
+			
+			if (ret < 0) {
+				LOG_ERR("connect, error: %d", -errno);
+				FATAL_ERROR();
+				return 0;
+			}
+
+			LOG_INF("udp_rx_buf content:");
+			for (size_t i = 0; i < COMMAND_MAX_SIZE; ++i) {
+			printk("%02X ", udp_rx_buf[i]);
+			}
+			printk("\n");
+
+			ret = process_udp_rx_buffer(udp_rx_buf, command_buf);
+			if (ret > 0) {
+				LOG_INF("Valid command reviced. Length:%d Value:",ret);
+				for (uint8_t i = 0; i < ret; i++) {
+					LOG_INF("%02X ", command_buf[i] & 0xFF);
+				}
+				recv_process(command_buf);
+			}else{
+				LOG_INF("No valid command reviced");
+			}
+			udp_rx_busy=0;
+			LOG_INF("udp_rx_busy should be 0:%d",udp_rx_busy);
+		//}
 
 	}
 
