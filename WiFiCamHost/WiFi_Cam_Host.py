@@ -1,26 +1,13 @@
 import sys
 import socket
-from threading import Thread
-from PyQt5.QtCore import Qt, pyqtSignal, QObject
-from PyQt5.QtWidgets import (
-    QApplication,
-    QMainWindow,
-    QVBoxLayout,
-    QWidget,
-    QLabel,
-    QLineEdit,
-    QPushButton,
-    QTextEdit,
-    QMessageBox,
-    QCompleter,
-    QHBoxLayout,
-    QSplitter,
-    QTabWidget,
-    QComboBox
-)
-from PyQt5.QtGui import QPixmap
-from PIL import Image
 from io import BytesIO
+from PIL import Image
+from threading import Thread
+from PyQt5.QtCore import *
+from PyQt5.QtGui import *
+from PyQt5.QtWidgets import *
+
+
 
 class CommandsToCamera:
     START_CHARACTER = 0x55
@@ -268,14 +255,16 @@ class ArducamMegaCameraDataProcess:
 class UDPClient(QObject):
     command_receiving_signal = pyqtSignal(bytes)
 
-    def __init__(self, server_address='192.168.1.144', server_port=50000):
+    def __init__(self, server_address='192.168.1.31', server_port=60000):
         super().__init__()
         self.server_address = server_address
         self.server_port = server_port
         self.buffer_size = 1024
         self.camera = ArducamMegaCameraDataProcess()
-        self.udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.udp_socket.bind(('0.0.0.0', 50006))
+        self.client_send_udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.client_send_udp_socket.bind(('0.0.0.0', 60000))
+        self.client_recv_udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.client_recv_udp_socket.bind(('0.0.0.0', 60006))
         self.received_content_text = None  # Placeholder for received content text edit widget
         self.command_buffer = b''  # Buffer to store the command packets
         self.in_command = False  # Flag to indicate if currently receiving a command
@@ -286,7 +275,7 @@ class UDPClient(QObject):
             command_bytes = bytes.fromhex(command_str)
 
             # Send the command bytes to the server
-            self.udp_socket.sendto(command_bytes, (self.server_address, self.server_port))
+            self.client_send_udp_socket.sendto(command_bytes, (self.server_address, self.server_port))
 
         except Exception as e:
             QMessageBox.critical(None, "Error", str(e))
@@ -295,7 +284,7 @@ class UDPClient(QObject):
         try:
             while True:
                 # Receive data
-                data, _ = self.udp_socket.recvfrom(self.buffer_size)
+                data, _ = self.client_recv_udp_socket.recvfrom(self.buffer_size)
                 # Print the received content as hexadecimal
                 received_hex = ' '.join(f'{byte:02x}' for byte in data)
                 print(f"Received: {received_hex}")
@@ -348,7 +337,8 @@ class WifiCamHostGUI(QMainWindow):
         super().__init__()
         self.resize(1200, 900)
         self.setWindowTitle("WiFi Camera Host")
-        self.target_server = ('192.168.1.144', 50000)
+        self.setWindowIcon(QIcon("icon.png"))
+        self.target_server = ('192.168.1.31', 50000)
         self.client = UDPClient(*self.target_server)
         self.commands=CommandsToCamera()
 
@@ -412,7 +402,7 @@ class WifiCamHostGUI(QMainWindow):
         layout_add.addWidget(label_add)
 
         self.target_server_entry = QLineEdit(f"{self.target_server[0]}:{self.target_server[1]}")
-        self.target_server_entry.placeholderText = ("e.g., 192.168.1.144:50000, which can be found in device log")
+        self.target_server_entry.placeholderText = ("e.g., 192.168.1.31:50000, which can be found in device log")
         layout_add.addWidget(self.target_server_entry)
 
         connect_button = QPushButton("Connect")
