@@ -1,0 +1,11 @@
+"""
+WiFi Camera Host GUI
+
+This application uses PyQt, which is licensed under the GNU General Public License (GPL).
+You can find the full text of the GPL license here: https://www.gnu.org/licenses/gpl-3.0.html
+
+If you wish to use PyQt in a closed-source or proprietary application, you need to obtain
+a commercial license from Riverbank Computing. For more information about commercial
+licensing, visit: https://www.riverbankcomputing.com/commercial/pyqt/
+
+"""
