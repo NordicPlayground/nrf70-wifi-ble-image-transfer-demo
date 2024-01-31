@@ -1,20 +1,48 @@
 # nRF70_WiFi_Camera_Demo
-WiFi Camear demo based on nRF7002DK and Arducam Mega Camera.
+WiFi Camera demo based on nRF7002DK and Arducam Mega Camera.
 
-# Hardware Prepare
+# Hardware Setup
 
-## Arducam Mega Cameara
-Link:
+---
+
+## Arducam Mega Camera
+
+* [Product Page](https://docs.arducam.com/Arduino-SPI-camera/MEGA-SPI/MEGA-SPI-Camera/)
+* [Datasheet](https://www.arducam.com/downloads/datasheet/Arducam_MEGA_SPI_Camera_Application_Note.pdf)
+* [Communication Protocol](https://www.arducam.com/docs/arducam-mega/arducam-mega-getting-started/packs/HostCommunicationProtocol.html)
 
 ## nRF7002DK 
-Link:
-nRF7002DK IO voltage uses 1.8v by default.Arducam Mega Camear IO voltage only support 5v/3.3v.
+
+* [Product Page](https://www.nordicsemi.com/Products/Development-hardware/nRF7002-DK) (Including schematic and PCB files in Downloads tab)
+* [User Guide](https://infocenter.nordicsemi.com/topic/ug_nrf7002_dk/UG/nrf7002_DK/intro.html)
+* [nRF7002 Specification](https://infocenter.nordicsemi.com/topic/ps_nrf7002/keyfeatures_html5.html)
+
+## Hardware Connection
+
+On nRF7002DK, the nRF5340 host MCU use 1.8v as VDD supply voltage for IO pins to interface with WiFi companion IC nRF7002. Arducam Mega Camera IO voltage only support 3.3v/5v.
+Considering the max acceptable VDD supply voltage for nRF7002 is 3.6v according to nRF7002 specification(Table 11: Recommended operating conditions). We need to change nRF5340 IO VDD supply voltage from 1.8v to 3.3v. 
+
+Accroding to following regulator design in nRF7002DK schematic, modifying R60 to 375K or R63 to 48K will change IO VDD to 3.3v.
+
+![VDD_IO](images/IO_VDD.png)
+
+Here is the pin connection with Arducam Mega SPI Camera marked on nRF7002DK.
+
+![connection](images/connection.png)
 
 
 # Firmware Prepare
+
+---
+
 ## Install nRF Connect SDK(NCS) version 2.5.1
 
+Please refer to https://developer.nordicsemi.com/nRF_Connect_SDK/doc/2.5.1/nrf/installation.html
+
 ## Cherry pick ArduCAM Mega Zephyr driver
+
+```
+cd c:/NCS/v2.5.1/zephyr
 git remote add arducam https://github.com/ArduCAM/zephyr.git 
 git fetch arducam
 From https://github.com/ArduCAM/zephyr
@@ -29,15 +57,79 @@ git cherry-pick 8cb926
 git cherry-pick 2db7d6
 git cherry-pick 37d1b7
 git remote remove arducam
+```
+## Download this repository
 
-## Build Application
+```
+git clone https://github.com/charlieshao5189/nRF70_WiFi_Camera_Demo.git
+```
 
-The WiFi camear demo firmare refer to the following two samples.
+## Firmware Building
 
-# Test Setup
+There are two options for enabling WiFi connection. If the WiFi AP(Access Point) is not fixed, you can build firmware with option 1). If you have a fixed AP, building firmware with option 2) will make your life much easier because you can avoid manual WiFi connection setup.
 
-ToDo:
-1. UDP Transciever
-2. Enable CONFIG_WIFI_CREDENTIALS_SHELL to be able to select WiFi networks at runtime.
-3. Input UDP server address at runtime.
+1) Firmware that enables WiFi using terminal commands. 
 
+Build the firmwre with defalut configuration using nRF Connect SDK VS Code externsion or following command.
+
+```
+west build -b nRF7002dk_nrf5340_cpuapp
+```
+
+Open an uart terminal which connected with nRF7002DK VCOM1. Try the following commands to connect with target WiFi AP.
+
+```
+uart:~$ wifi_cred help
+wifi_cred - Wi-Fi Credentials commands
+Subcommands:
+  add           :Add network to storage.
+  auto_connect  :Connect to any stored network.
+  delete        :Delete network from storage.
+  list          :List stored networks.
+uart:~$ wifi_cred add help
+Usage: wifi_cred add "network name" {OPEN, WPA2-PSK, WPA2-PSK-SHA256, WPA3-SAE} [psk/password] [bssid] [{2.4GHz, 5GHz}] [favorite]
+uart:~$ wifi_cred add "your-ssid" WPA2-PSK "your-password"
+wuart:~$ ifi_cred auto_connect
+
+```
+If WiFi connection succesfully build, the WiFi credentionals will be rembered. nRF7002DK will try to reconnect automatically after device reset.
+
+2) Firmware that enables WiFi with static crendtials.
+
+Fill your WiFi AP SSID and Password, add overlay-wifi-crendtials-static.conf to build the firmware.
+
+
+```
+# Enable static Wi-Fi network configuration
+CONFIG_WIFI_CREDENTIALS_STATIC=y
+CONFIG_WIFI_CREDENTIALS_STATIC_SSID="your-ssid"
+CONFIG_WIFI_CREDENTIALS_STATIC_PASSWORD="your-password"
+# Disable support for shell commands
+CONFIG_SHELL=n
+```
+
+# WiFi Camera Host GUI Application(WiFiCamHost) 
+
+---
+
+The WiFICamHost is a python script that can run on any PC to communicate WiFi Camera Device(nRF7002DK+ArducamMegaCamera here) through UDP protocol.
+Ensure you have installed a recent Python version then run the following command to start the application on your PC terminal.
+
+```
+cd WiFICamHost
+pip install -r requirements.txt
+python WiFi_Cam_Host.py
+```
+
+# Testing
+
+---
+
+1) Get the WiFi Camera address from its log after the WiFi connection is built.
+```
+ <inf> WiFiCam: WiFi Camera Server is ready on nRF7002DK, listening on 192.168.1.101:50000
+```
+2) Run the WiFiCamHost script and connect to the target address from a PC in the same local network.
+3) In the Video table, choose a resolution and press start stream, then the video stream will start.
+
+![WiFiCamHost](images/WiFiCamHost.png)
