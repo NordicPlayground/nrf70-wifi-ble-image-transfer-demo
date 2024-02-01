@@ -23,7 +23,7 @@
 };
 
 &spi1 {
-	clock-frequency = <4000000>;
+	clock-frequency = <8000000>;
 	compatible = "nordic,nrf-spim";
 	status = "okay";
 	pinctrl-0 = <&spi1_default>;
@@ -33,7 +33,7 @@
 	arducam_mega0:arducam-mega0@0 {
 			compatible = "arducam,mega";
 			reg = <0>;
-			spi-max-frequency = <4000000>;
+			spi-max-frequency = <6000000>;
 			status = "okay";
 	};
 };

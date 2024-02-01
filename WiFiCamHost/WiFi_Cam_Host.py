@@ -214,7 +214,7 @@ class ArducamMegaCameraDataProcess:
 
         try:
             img = Image.open(BytesIO(frame))
-            img.save(".temp_img", "JPEG")
+            img.save("img.temp", "JPEG")
         except Exception as e:
             error_message = f"Error occurred while processing image: {str(e)}"
         return f"RECV: Frame is captured!\nFrameSzie: {bytesframe}\nFPS: {fps:.2f}\nThroughPUT: {bytesframe*fps/1024:.2f}KB/SEC"
@@ -544,14 +544,14 @@ class WifiCamHostGUI(QMainWindow):
         
         # Display the received video frame
         if result.startswith("RECV: Connected to WiFi Camera!"):
-            self.connect_button.setEnabled(False)
+            #self.connect_button.setEnabled(False)
             self.start_stream_button.setEnabled(True)
             self.stop_stream_button.setEnabled(True)
             self.capture_image_button.setEnabled(True)
             
         # Display the received video frame
         if result.startswith("RECV: Frame is captured!"):
-            img_path = ".temp_img"
+            img_path = "img.temp"
             pixmap = QPixmap(img_path)
             self.video_frame_label.setPixmap(pixmap)
     # Update method

@@ -39,9 +39,9 @@ Here is the pin connection with Arducam Mega SPI Camera marked on nRF7002DK.
 
 Two sockets are used by the UDP Server(WiFiCam+nRF7002DK).
 
-UDP Client(WiFiCamHost+PC):50000 <- UDP Server(WiFiCam+nRF7002DK):60000 = socket_recv
+UDP Client(WiFiCamHost+PC):50000 <->> UDP Server(WiFiCam+nRF7002DK):60000 = socket_recv
 
-UDP Client(WiFiCamHost+PC):50005 -> UDP Server(WiFiCam+nRF7002DK):60006 = socket_send
+UDP Client(WiFiCamHost+PC):50005 <<-> UDP Server(WiFiCam+nRF7002DK):60006 = socket_send
 
 socket_recv is built by the UDP server to wait for the UDP client to connect to its address, then the server can know the client address. The server builds a new socket_send to send WiFiCam data like camera info, and video frame to the client. The previous socket_recv is used to receive commands from the UDP client. 
 
@@ -141,9 +141,16 @@ python WiFi_Cam_Host.py
 
 1) Get the WiFi Camera address from its log after the WiFi connection is built.
 ```
- <inf> WiFiCam: WiFi Camera Server is ready on nRF7002DK, listening on 192.168.1.101:60000
+ <inf> NetUtil: WiFi Camera Server is ready on nRF7002DK, copy and paste 192.168.1.101:60000 in Target WiFi Camera Address window on WiFi Camera Host.
 ```
 2) Run the WiFiCamHost script and connect to the target address from a PC in the same local network.
 3) In the Video table, choose a resolution and press start stream, then the video stream will start.
 
 ![WiFiCamHost](images/WiFiCamHost.png)
+
+## Future Improvments
+
+1) Modify overlay-tx-prioritized.conf can potentionafially improve WiFi speed.
+2) FPS and ThrougPut calculation in WiFi_Cam_Host.py is not accurate.
+3) [zperf](https://academy.nordicsemi.com/courses/wi-fi-fundamentals/lessons/lesson-3-wifi-fundamentals/topic/lesson-3-exercise-2/) can be used to evaluate current WiFi environment like general UDP transfer speed.
+4) A simple test on 5GH band WiFi AP show that socket_recv is ok, but socket_send seem to be blocked for some reason. 2.4GH has no issue.
