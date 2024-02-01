@@ -153,6 +153,6 @@ python WiFi_Cam_Host.py
 ## Future Improvments
 
 1) Modify overlay-tx-prioritized.conf can potentionafially improve WiFi speed.
-2) FPS and ThrougPut calculation in WiFi_Cam_Host.py is not accurate.
-3) [zperf](https://academy.nordicsemi.com/courses/wi-fi-fundamentals/lessons/lesson-3-wifi-fundamentals/topic/lesson-3-exercise-2/) can be used to evaluate current WiFi environment like general UDP transfer speed.
-4) A simple test on 5GH band WiFi AP show that socket_recv is ok, but socket_send seem to be blocked for some reason. 2.4GH has no issue.
+2) FPS and ThroughPut calculation in WiFi_Cam_Host.py is not accurate.
+3) [zperf](https://academy.nordicsemi.com/courses/wi-fi-fundamentals/lessons/lesson-3-wifi-fundamentals/topic/lesson-3-exercise-2/) can be used to evaluate current WiFi environment, e.g. general UDP bandwidth, loss rate.
+4) A simple test on 5GH band WiFi AP shows that socket_recv is ok, but socket_send seems to be blocked for some reason. Tests on 2.4GH have no issue.
