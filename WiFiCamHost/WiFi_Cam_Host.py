@@ -259,9 +259,9 @@ class UDPClient(QObject):
         self.buffer_size = 1024
         self.camera = ArducamMegaCameraDataProcess()
         self.client_send_udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.client_send_udp_socket.bind(('0.0.0.0', 60000))
+        self.client_send_udp_socket.bind(('0.0.0.0', 50000))
         self.client_recv_udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.client_recv_udp_socket.bind(('0.0.0.0', 60006))
+        self.client_recv_udp_socket.bind(('0.0.0.0', 50005))
         self.log_content_text = QTextEdit()  # Placeholder for received content text edit widget
         self.command_buffer = b''  # Buffer to store the command packets
         self.in_command = False  # Flag to indicate if currently receiving a command
@@ -510,7 +510,7 @@ class WifiCamHostGUI(QMainWindow):
         label = QLabel("Log:")
         layout.addWidget(label)
 
-        self.client.log_content_text = QTextEdit("Check WiFi Camera Device printout for the target address.\n Example: 192.168.1.100:50000")  # Set the text edit widget in client
+        self.client.log_content_text = QTextEdit("Check WiFi Camera Device printout for the target address.\n Example: 192.168.1.100:60000")  # Set the text edit widget in client
         layout.addWidget(self.client.log_content_text)
 
         clear_button = QPushButton("Clear Log")
