@@ -35,6 +35,16 @@ Here is the pin connection with Arducam Mega SPI Camera marked on nRF7002DK.
 
 ---
 
+## How firmware works
+
+Two sockets are used by the UDP Server(WiFiCam+nRF7002DK).
+
+UDP Client(WiFiCamHost+PC):50000 <- UDP Server(WiFiCam+nRF7002DK):60000 = socket_recv
+
+UDP Client(WiFiCamHost+PC):50005 -> UDP Server(WiFiCam+nRF7002DK):60006 = socket_send
+
+socket_recv is built by the UDP server to wait for the UDP client to connect to its address, then the server can know the client address. The server builds a new socket_send to send WiFiCam data like camera info, and video frame to the client. The previous socket_recv is used to receive commands from the UDP client. 
+
 ## Install nRF Connect SDK(NCS) version 2.5.1
 
 Please refer to https://developer.nordicsemi.com/nRF_Connect_SDK/doc/2.5.1/nrf/installation.html
@@ -76,7 +86,7 @@ Build the firmwre with defalut configuration using nRF Connect SDK VS Code exter
 west build -b nRF7002dk_nrf5340_cpuapp
 ```
 
-Open an uart terminal which connected with nRF7002DK VCOM1. Try the following commands to connect with target WiFi AP.
+Open an uart terminal which connected with nRF7002DK VCOM1. Try the following commands to connect with target WiFi AP. You can learn from DevAcademy [WiFi Fundamentals course Exercise 1](https://academy.nordicsemi.com/courses/wi-fi-fundamentals/lessons/lesson-3-wifi-fundamentals/topic/lesson-3-exercise-1-2/) to get more details about "wifi_cred" commands.
 
 ```
 uart:~$ wifi_cred help
@@ -89,12 +99,16 @@ Subcommands:
 uart:~$ wifi_cred add help
 Usage: wifi_cred add "network name" {OPEN, WPA2-PSK, WPA2-PSK-SHA256, WPA3-SAE} [psk/password] [bssid] [{2.4GHz, 5GHz}] [favorite]
 uart:~$ wifi_cred add "your-ssid" WPA2-PSK "your-password"
-wuart:~$ ifi_cred auto_connect
+uart:~$ wifi_cred auto_connect
 
 ```
-If WiFi connection succesfully build, the WiFi credentionals will be rembered. nRF7002DK will try to reconnect automatically after device reset.
+If nRF7002DK connect with a AP succesfully, the WiFi credentionals will be stored. nRF7002DK will try to reconnect automatically using stored credentionals after device reset. A prebuild firware is avaliable in prebuiltFW folder.
 
 2) Firmware that enables WiFi with static crendtials.
+
+```
+west build -b nRF7002dk_nrf5340_cpuapp -- -DEXTRA_CONF_FILE=overlay-wifi-crendtials-static.conf
+```
 
 Fill your WiFi AP SSID and Password, add overlay-wifi-crendtials-static.conf to build the firmware.
 
@@ -127,7 +141,7 @@ python WiFi_Cam_Host.py
 
 1) Get the WiFi Camera address from its log after the WiFi connection is built.
 ```
- <inf> WiFiCam: WiFi Camera Server is ready on nRF7002DK, listening on 192.168.1.101:50000
+ <inf> WiFiCam: WiFi Camera Server is ready on nRF7002DK, listening on 192.168.1.101:60000
 ```
 2) Run the WiFiCamHost script and connect to the target address from a PC in the same local network.
 3) In the Video table, choose a resolution and press start stream, then the video stream will start.
