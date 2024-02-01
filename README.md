@@ -104,6 +104,8 @@ uart:~$ wifi_cred auto_connect
 ```
 If nRF7002DK connect with a AP succesfully, the WiFi credentionals will be stored. nRF7002DK will try to reconnect automatically using stored credentionals after device reset. A prebuild firware is avaliable in prebuiltFW folder.
 
+A pre-built fimrware with wifi_cred shell support is avliable here [prebuildtFW/ncs251_wifi_camera_shell.hex](prebuildtFW/).
+
 2) Firmware that enables WiFi with static crendtials.
 
 ```
