@@ -5,6 +5,7 @@
 *.pyc
 *.swp
 *.swo
+*.ini
 *~
 build
 build-*
