@@ -6,6 +6,7 @@
 *.swp
 *.swo
 *.ini
+*.temp
 *~
 build
 build-*
