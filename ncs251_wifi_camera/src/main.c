@@ -22,6 +22,8 @@ LOG_MODULE_REGISTER(WiFiCam, CONFIG_LOG_DEFAULT_LEVEL);
 #include <zephyr/drivers/video/arducam_mega.h>
 #include <zephyr/net/socket.h>
 
+#include "app_bluetooth.h"
+
 extern int socket_send;
 extern uint8_t udp_recv_buf[];
 extern struct k_msgq udp_recv_queue;
@@ -380,6 +382,12 @@ int main(void)
 
 	video_stream_stop(video);
 	LOG_INF("Device %s is ready!", video->name);
+
+	ret = app_bt_init();
+	if (ret < 0) {
+		LOG_ERR("Error initializing Bluetooth");
+		return -1;
+	}
 
 	k_sem_take(&sockets_ready, K_FOREVER);
 
