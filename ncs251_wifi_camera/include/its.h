@@ -30,15 +30,17 @@ extern "C" {
 #define BT_UUID_ITS_RX        BT_UUID_DECLARE_128(BT_UUID_ITS_RX_VAL)
 #define BT_UUID_ITS_IMG_INFO  BT_UUID_DECLARE_128(BT_UUID_ITS_IMG_INFO_VAL)
 
-enum its_rx_cmd_e {ITS_RX_CMD_SINGLE_CAPTURE, 
-				   ITS_RX_CMD_SEND_BLE_PARAMS, 
+enum its_rx_cmd_e {ITS_RX_CMD_SINGLE_CAPTURE = 1, 
 				   ITS_RX_CMD_START_STREAM, 
 				   ITS_RX_CMD_STOP_STREAM,
 				   ITS_RX_CMD_CHANGE_RESOLUTION, 
-				   ITS_RX_CMD_CHANGE_PHY};
+				   ITS_RX_CMD_CHANGE_PHY,
+				   ITS_RX_CMD_SEND_BLE_PARAMS};
 
 struct its_rx_cb_evt_t {
 	enum its_rx_cmd_e command;
+	uint8_t *data;
+	uint32_t len;
 };
 
 /** @brief Callback type for when an LED state change is received. */
@@ -64,6 +66,8 @@ struct its_ble_params_info_t {
 };
 
 int bt_its_init(struct bt_its_cb *callbacks);
+
+int bt_its_send_img_data(uint8_t *buf, uint16_t length);
 
 int bt_its_send_img_info(struct its_img_info_t *img_info);
 

@@ -157,6 +157,45 @@ int take_picture(void)
 	return 0;
 }
 
+int take_picture_bt(void)
+{
+		int err;
+	enum video_frame_fragmented_status f_status;
+
+	err = video_dequeue(video, VIDEO_EP_OUT, &vbuf, K_FOREVER);
+	if (err)
+	{
+		LOG_ERR("Unable to dequeue video buf");
+		return -1;
+	}
+
+	f_status = vbuf->flags;
+
+	head_and_tail[2] = 0x01;
+	app_bt_send_picture_header(vbuf->size);
+	app_bt_send_picture_data(head_and_tail, 3);
+
+	target_resolution = (((current_resolution & 0x0f) << 4) | 0x01);
+	//send(socket_send, &target_resolution, 1, 0);
+
+	//send(socket_send, vbuf->buffer, vbuf->bytesused, 0);
+	app_bt_send_picture_data(vbuf->buffer, vbuf->bytesused);
+
+	video_enqueue(video, VIDEO_EP_OUT, vbuf);
+	while (f_status == VIDEO_BUF_FRAG)
+	{
+		video_dequeue(video, VIDEO_EP_OUT, &vbuf, K_FOREVER);
+		f_status = vbuf->flags;
+		//send(socket_send, vbuf->buffer, vbuf->bytesused, 0);
+		app_bt_send_picture_data(vbuf->buffer, vbuf->bytesused);
+		video_enqueue(video, VIDEO_EP_OUT, vbuf);
+	}
+	app_bt_send_picture_data(&head_and_tail[3], 2);
+	//send(socket_send, &head_and_tail[3], 2, 0);
+
+	return 0;
+}
+
 void video_preview(void)
 {
 	int err;
@@ -360,6 +399,19 @@ uint8_t process_udp_rx_buffer(char *udp_rx_buf, char *command_buf)
 	return command_length;
 }
 
+// Bluetooth callbacks
+void app_bt_take_picture_callback(void)
+{
+	LOG_INF("TAKE PICTURE");
+	video_stream_start(video);
+	take_picture_bt();
+	video_stream_stop(video);
+}
+
+const struct app_bt_cb app_bt_callbacks = {
+    .take_picture = app_bt_take_picture_callback,
+};
+
 int main(void)
 {
 	int ret;
@@ -383,7 +435,7 @@ int main(void)
 	video_stream_stop(video);
 	LOG_INF("Device %s is ready!", video->name);
 
-	ret = app_bt_init();
+	ret = app_bt_init(&app_bt_callbacks);
 	if (ret < 0) {
 		LOG_ERR("Error initializing Bluetooth");
 		return -1;

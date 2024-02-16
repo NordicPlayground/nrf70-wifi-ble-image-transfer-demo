@@ -30,6 +30,7 @@ LOG_MODULE_REGISTER(bt_its, LOG_LEVEL_DBG);
 
 static bool                   notify_enabled[2];
 static struct bt_its_cb       its_cb;
+static struct its_rx_cb_evt_t cb_evt;
 
 static void its_tx_ccc_changed(const struct bt_gatt_attr *attr,
 				  uint16_t value)
@@ -53,18 +54,18 @@ static ssize_t its_rx_received(struct bt_conn *conn,
 	LOG_DBG("Attribute write, handle: %u, conn: %p", attr->handle,
 		(void *)conn);
 
-	if (len != 1U) {
-		LOG_DBG("Write led: Incorrect data length");
-		return BT_GATT_ERR(BT_ATT_ERR_INVALID_ATTRIBUTE_LEN);
-	}
-
 	if (offset != 0) {
-		LOG_DBG("Write led: Incorrect data offset");
+		LOG_DBG("Write RX char: Incorrect data offset");
 		return BT_GATT_ERR(BT_ATT_ERR_INVALID_OFFSET);
 	}
 
+	uint8_t *byte_ptr = (uint8_t*)buf;
+
 	if (its_cb.rx_cb) {
-		
+		cb_evt.command = byte_ptr[0];
+		cb_evt.data = &byte_ptr[1];
+		cb_evt.len = len - 1;
+		its_cb.rx_cb(&cb_evt);
 	}
 
 	return len;
@@ -114,10 +115,30 @@ BT_GATT_PRIMARY_SERVICE(BT_UUID_ITS), 					    // Attr index: 0
 int bt_its_init(struct bt_its_cb *callbacks)
 {
 	if (callbacks) {
-		its_cb.led_cb    = callbacks->led_cb;
-		its_cb.button_cb = callbacks->button_cb;
+		its_cb.rx_cb = callbacks->rx_cb;
 	}
 
+	return 0;
+}
+
+int bt_its_send_img_data(uint8_t *buf, uint16_t length)
+{
+	int err;
+	uint8_t *current_buf = buf;
+	while (length > 244) {
+		err = bt_gatt_notify(NULL, &its_svc.attrs[2], current_buf, 244);
+		if (err < 0) {
+			LOG_ERR("BT notify error: %i", err);
+		}
+		else LOG_DBG("Notify TX %i bytes", 244);
+		current_buf += 244;
+		length -= 244;
+	}
+	err = bt_gatt_notify(NULL, &its_svc.attrs[2], current_buf, length);
+	if (err < 0) {
+		LOG_ERR("BT notify error: %i", err);
+	}
+	else LOG_DBG("Notify TX %i bytes", length);
 	return 0;
 }
 
