@@ -121,24 +121,43 @@ int bt_its_init(struct bt_its_cb *callbacks)
 	return 0;
 }
 
-int bt_its_send_img_data(uint8_t *buf, uint16_t length)
+void on_notify_complete(struct bt_conn *conn, void *user_data)
+{
+	LOG_DBG("not complete");
+}
+
+int bt_its_send_img_data(struct bt_conn *conn, uint8_t *buf, uint16_t length)
 {
 	int err;
 	uint8_t *current_buf = buf;
-	while (length > 244) {
-		err = bt_gatt_notify(NULL, &its_svc.attrs[2], current_buf, 244);
+	int maxlen = 20;
+	int cnt = 0;
+	LOG_DBG("IMG buf length %i", length);
+	struct bt_gatt_notify_params notify_params = {
+		.attr = &its_svc.attrs[2],
+		.func = on_notify_complete,
+		.user_data = 0,
+		.uuid = 0,
+	};
+	while (length > maxlen) {
+		LOG_DBG("Notify TX %i bytes", maxlen);
+		notify_params.data = current_buf;
+		notify_params.len = maxlen;
+		err = bt_gatt_notify_cb(conn, &notify_params);
 		if (err < 0) {
 			LOG_ERR("BT notify error: %i", err);
 		}
-		else LOG_DBG("Notify TX %i bytes", 244);
-		current_buf += 244;
-		length -= 244;
+		current_buf += maxlen;
+		length -= maxlen;
 	}
-	err = bt_gatt_notify(NULL, &its_svc.attrs[2], current_buf, length);
+	LOG_DBG("IMG data Notify TX %i bytes", length);
+	notify_params.data = current_buf;
+	notify_params.len = maxlen;
+	err = bt_gatt_notify_cb(conn, &notify_params);
 	if (err < 0) {
 		LOG_ERR("BT notify error: %i", err);
 	}
-	else LOG_DBG("Notify TX %i bytes", length);
+
 	return 0;
 }
 
@@ -152,6 +171,8 @@ int bt_its_send_img_info(struct its_img_info_t * img_info)
 
 	notify_buf[0] = ITS_IMG_INFO_DATA_TYPE_IMG_INFO;
 	memcpy(&notify_buf[1], img_info, sizeof(struct its_img_info_t));
+	
+	LOG_DBG("IMG info Notify TX %i bytes", 1 + sizeof(struct its_img_info_t));
 
 	return bt_gatt_notify(NULL, &its_svc.attrs[7], 
 						  notify_buf, 1 + sizeof(struct its_img_info_t));
@@ -167,7 +188,9 @@ int bt_its_send_ble_params_info(struct its_ble_params_info_t* ble_params_info)
 
 	notify_buf[0] = ITS_IMG_INFO_DATA_TYPE_BLE_PARAMS;
 	memcpy(&notify_buf[1], ble_params_info, sizeof(struct its_ble_params_info_t));
-
+	
+	LOG_DBG("BLE params Notify TX %i bytes",  1 + sizeof(struct its_ble_params_info_t));
+	
 	return bt_gatt_notify(NULL, &its_svc.attrs[7], 
 						  notify_buf, 1 + sizeof(struct its_ble_params_info_t));
 }

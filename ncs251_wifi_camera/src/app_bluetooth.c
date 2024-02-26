@@ -4,6 +4,7 @@
 #include <zephyr/bluetooth/uuid.h>
 #include <zephyr/bluetooth/gatt.h>
 #include <zephyr/bluetooth/hci.h>
+#include <zephyr/settings/settings.h>
 #include "its.h"
 
 #include <zephyr/logging/log.h>
@@ -28,6 +29,15 @@ static const struct bt_data sd[] = {
 	BT_DATA_BYTES(BT_DATA_UUID128_ALL, BT_UUID_ITS_VAL),
 };
 
+void att_mtu_updated(struct bt_conn *conn, uint16_t tx, uint16_t rx)
+{
+	LOG_INF("MTU Updated: tx %d, rx %d", tx, rx);
+}
+
+static struct bt_gatt_cb gatt_cb = {
+	.att_mtu_updated = att_mtu_updated,
+};
+
 static void connected(struct bt_conn *conn, uint8_t err)
 {
 	char addr[BT_ADDR_LE_STR_LEN];
@@ -41,6 +51,16 @@ static void connected(struct bt_conn *conn, uint8_t err)
 	LOG_INF("Connected %s", addr);
 
 	current_conn = bt_conn_ref(conn);
+#if 0
+	exchange_params.func = exchange_func;
+
+	err = bt_gatt_exchange_mtu(default_conn, &exchange_params);
+	if (err) {
+		printk("MTU exchange failed (err %d)\n", err);
+	} else {
+		printk("MTU exchange pending\n");
+	}
+#endif
 }
 
 static void disconnected(struct bt_conn *conn, uint8_t reason)
@@ -57,9 +77,17 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 	}
 }
 
+void connection_param_update (struct bt_conn *conn, uint16_t interval,
+				 uint16_t latency, uint16_t timeout)
+{
+	LOG_INF("Connection paramaters updated. The new connection interval is %d ms", (int) (interval*1.25f));
+}
+
+
 BT_CONN_CB_DEFINE(conn_callbacks) = {
 	.connected    = connected,
 	.disconnected = disconnected,
+	.le_param_updated = connection_param_update,
 };
 
 void its_rx_callback(struct its_rx_cb_evt_t *evt)
@@ -124,9 +152,11 @@ int app_bt_init(const struct app_bt_cb *callbacks)
 
 	LOG_INF("Bluetooth initialized");
 
-	//if (IS_ENABLED(CONFIG_SETTINGS)) {
-	//	settings_load();
-	//}
+	bt_gatt_cb_register(&gatt_cb);
+
+	if (IS_ENABLED(CONFIG_SETTINGS)) {
+		settings_load();
+	}
 
     err = bt_its_init(&its_cb);
 	if (err) {
@@ -151,7 +181,8 @@ int app_bt_send_picture_header(uint32_t pic_size)
 
 int app_bt_send_picture_data(uint8_t *buf, uint16_t len)
 {
-	return bt_its_send_img_data(buf, len);
+	return bt_its_send_img_data(current_conn, buf, len);
 }
 
-K_THREAD_DEFINE(app_bt_thread, 1024, app_bt_thread_func, NULL, NULL, NULL, 7, 0, 0);
+K_THREAD_DEFINE(app_bt_thread, 4096, app_bt_thread_func, NULL, NULL, NULL, 
+				K_PRIO_PREEMPT(K_LOWEST_APPLICATION_THREAD_PRIO), 0, 0);

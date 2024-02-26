@@ -159,10 +159,10 @@ int take_picture(void)
 
 int take_picture_bt(void)
 {
-		int err;
+	int err;
 	enum video_frame_fragmented_status f_status;
 
-	err = video_dequeue(video, VIDEO_EP_OUT, &vbuf, K_FOREVER);
+	err = video_dequeue(video, VIDEO_EP_OUT, &vbuf, K_MSEC(1000));
 	if (err)
 	{
 		LOG_ERR("Unable to dequeue video buf");
@@ -176,9 +176,7 @@ int take_picture_bt(void)
 	app_bt_send_picture_data(head_and_tail, 3);
 
 	target_resolution = (((current_resolution & 0x0f) << 4) | 0x01);
-	//send(socket_send, &target_resolution, 1, 0);
 
-	//send(socket_send, vbuf->buffer, vbuf->bytesused, 0);
 	app_bt_send_picture_data(vbuf->buffer, vbuf->bytesused);
 
 	video_enqueue(video, VIDEO_EP_OUT, vbuf);
@@ -186,12 +184,11 @@ int take_picture_bt(void)
 	{
 		video_dequeue(video, VIDEO_EP_OUT, &vbuf, K_FOREVER);
 		f_status = vbuf->flags;
-		//send(socket_send, vbuf->buffer, vbuf->bytesused, 0);
+
 		app_bt_send_picture_data(vbuf->buffer, vbuf->bytesused);
 		video_enqueue(video, VIDEO_EP_OUT, vbuf);
 	}
 	app_bt_send_picture_data(&head_and_tail[3], 2);
-	//send(socket_send, &head_and_tail[3], 2, 0);
 
 	return 0;
 }
@@ -240,7 +237,7 @@ void video_preview(void)
 
 int report_mega_info(void)
 {
-	char str_buf[400];
+	static char str_buf[400];
 	uint32_t str_len;
 	char *mega_type;
 	struct arducam_mega_info mega_info;
@@ -273,7 +270,7 @@ int report_mega_info(void)
 			mega_type, mega_info.support_resolution, mega_info.support_special_effects,
 			mega_info.enable_focus, mega_info.exposure_value_max, mega_info.exposure_value_min,
 			mega_info.gain_value_max, mega_info.gain_value_min, mega_info.enable_sharpness);
-	LOG_INF("%s", str_buf);
+	printk("%s", str_buf);
 	str_len = strlen(str_buf);
 	cam_to_host_command_send(0x02, str_buf, str_len);
 	return 0;
@@ -281,16 +278,19 @@ int report_mega_info(void)
 
 uint8_t recv_process(uint8_t *buff)
 {
+	LOG_INF("recv_process: cmd %x, data %x", buff[0], buff[1]);
 	switch (buff[0])
 	{
 	case SET_PICTURE_RESOLUTION:
+		LOG_INF("camcmd: SET_PICTURE_RESOLUTION");
+
 		if (set_mega_resolution(buff[1]) == 0)
 		{
 			take_picture_fmt = buff[1];
 		}
 		break;
 	case SET_VIDEO_RESOLUTION:
-		LOG_INF("SET_VIDEO_RESOLUTION");
+		LOG_INF("camcmd: SET_VIDEO_RESOLUTION");
 		if (preview_on == 0)
 		{
 			LOG_INF("SET_VIDEO_RESOLUTION preview_on");
@@ -403,6 +403,9 @@ uint8_t process_udp_rx_buffer(char *udp_rx_buf, char *command_buf)
 void app_bt_take_picture_callback(void)
 {
 	LOG_INF("TAKE PICTURE");
+	//report_mega_info();
+	//k_msleep(1000);
+	set_mega_resolution(0x1A);
 	video_stream_start(video);
 	take_picture_bt();
 	video_stream_stop(video);
@@ -441,8 +444,6 @@ int main(void)
 		return -1;
 	}
 
-	k_sem_take(&sockets_ready, K_FOREVER);
-
 	/* Alloc video buffers and enqueue for capture */
 	for (int i = 0; i < ARRAY_SIZE(buffers); i++)
 	{
@@ -455,20 +456,18 @@ int main(void)
 		video_enqueue(video, VIDEO_EP_OUT, buffers[i]);
 	}
 
+	k_sem_take(&sockets_ready, K_FOREVER);
+
 	while (1)
 	{
-		ret = k_msgq_get(&udp_recv_queue, &udp_recv_buf, K_USEC(1));
+		ret = k_msgq_get(&udp_recv_queue, &udp_recv_buf, K_FOREVER);
 		if (ret == 0)
 		{
-			LOG_INF("k_msgq_get");
 			ret = process_udp_rx_buffer(udp_recv_buf, command_buf);
 			if (ret > 0)
 			{
-				LOG_INF("Valid command reviced. Length:%d Value:", ret);
-				for (uint8_t i = 0; i < ret; i++)
-				{
-					LOG_INF("%02X ", command_buf[i] & 0xFF);
-				}
+				LOG_INF("Valid command received. Length:%d", ret);
+				LOG_HEXDUMP_INF(command_buf, ret, "Data: ");
 				recv_process(command_buf);
 			}
 			else
@@ -478,9 +477,10 @@ int main(void)
 		}
 		if (preview_on == 1)
 		{
+			LOG_INF("Video_preview");
 			video_preview();
 		}
-		k_yield();
+		//k_yield();
 	}
 	return 0;
 }
