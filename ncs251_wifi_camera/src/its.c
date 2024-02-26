@@ -121,11 +121,6 @@ int bt_its_init(struct bt_its_cb *callbacks)
 	return 0;
 }
 
-void on_notify_complete(struct bt_conn *conn, void *user_data)
-{
-	LOG_DBG("not complete");
-}
-
 int bt_its_send_img_data(struct bt_conn *conn, uint8_t *buf, uint16_t length)
 {
 	int err;
@@ -133,27 +128,18 @@ int bt_its_send_img_data(struct bt_conn *conn, uint8_t *buf, uint16_t length)
 	int maxlen = 20;
 	int cnt = 0;
 	LOG_DBG("IMG buf length %i", length);
-	struct bt_gatt_notify_params notify_params = {
-		.attr = &its_svc.attrs[2],
-		.func = on_notify_complete,
-		.user_data = 0,
-		.uuid = 0,
-	};
+	
 	while (length > maxlen) {
-		LOG_DBG("Notify TX %i bytes", maxlen);
-		notify_params.data = current_buf;
-		notify_params.len = maxlen;
-		err = bt_gatt_notify_cb(conn, &notify_params);
+		LOG_DBG("Notify TX: Len %i, Remaining: %i", maxlen, length);
+		err = bt_gatt_notify(NULL, &its_svc.attrs[2], current_buf, maxlen);
 		if (err < 0) {
 			LOG_ERR("BT notify error: %i", err);
 		}
 		current_buf += maxlen;
 		length -= maxlen;
 	}
-	LOG_DBG("IMG data Notify TX %i bytes", length);
-	notify_params.data = current_buf;
-	notify_params.len = maxlen;
-	err = bt_gatt_notify_cb(conn, &notify_params);
+	LOG_DBG("Notify TX remaining %i bytes", length);
+	err = bt_gatt_notify(NULL, &its_svc.attrs[2], current_buf, length);
 	if (err < 0) {
 		LOG_ERR("BT notify error: %i", err);
 	}
@@ -172,7 +158,7 @@ int bt_its_send_img_info(struct its_img_info_t * img_info)
 	notify_buf[0] = ITS_IMG_INFO_DATA_TYPE_IMG_INFO;
 	memcpy(&notify_buf[1], img_info, sizeof(struct its_img_info_t));
 	
-	LOG_DBG("IMG info Notify TX %i bytes", 1 + sizeof(struct its_img_info_t));
+	LOG_DBG("IMG info Notify TX %i bytes. Img size: %i", 1 + sizeof(struct its_img_info_t), img_info->file_size_bytes);
 
 	return bt_gatt_notify(NULL, &its_svc.attrs[7], 
 						  notify_buf, 1 + sizeof(struct its_img_info_t));
