@@ -400,16 +400,21 @@ uint8_t process_udp_rx_buffer(char *udp_rx_buf, char *command_buf)
 void app_bt_take_picture_callback(void)
 {
 	LOG_INF("TAKE PICTURE");
-	//report_mega_info();
-	//k_msleep(1000);
-	set_mega_resolution(0x1A);
+	//set_mega_resolution(0x1A);
 	video_stream_start(video);
 	take_picture_bt();
 	video_stream_stop(video);
 }
 
+void app_bt_change_resolution_callback(uint8_t resolution)
+{
+	LOG_INF("Change resolution to %i", resolution);
+	set_mega_resolution(0x10 | (resolution & 0xF));
+}
+
 const struct app_bt_cb app_bt_callbacks = {
     .take_picture = app_bt_take_picture_callback,
+	.change_resolution = app_bt_change_resolution_callback,
 };
 
 int main(void)

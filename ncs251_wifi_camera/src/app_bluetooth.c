@@ -10,7 +10,7 @@
 #include <zephyr/logging/log.h>
 
 #define LOG_MODULE_NAME app_bluetooth
-LOG_MODULE_REGISTER(LOG_MODULE_NAME, LOG_LEVEL_DBG);
+LOG_MODULE_REGISTER(LOG_MODULE_NAME, LOG_LEVEL_INF);
 
 #define DEVICE_NAME CONFIG_BT_DEVICE_NAME
 #define DEVICE_NAME_LEN	(sizeof(DEVICE_NAME) - 1)
@@ -18,6 +18,7 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME, LOG_LEVEL_DBG);
 static struct bt_conn *current_conn;
 
 static app_bt_take_picture_cb app_callback_take_picture;
+static app_bt_change_resolution_cb app_callback_change_resolution;
 
 // In order to maximize data throughput, scale the notifications after the TX data length
 static int le_tx_data_length = 20;
@@ -151,6 +152,11 @@ static void app_bt_thread_func(void)
 				break;
 			case ITS_RX_CMD_CHANGE_RESOLUTION:
 				LOG_DBG("ITS RX CMD: Change res");
+				if (app_callback_change_resolution) {
+					uint8_t res = rx_evt.data[0];
+					if (res >= 5) res = 6; 
+					app_callback_change_resolution(res);
+				}
 				break;
 			case ITS_RX_CMD_CHANGE_PHY:
 				LOG_DBG("ITS RX CMD: Change phy");
@@ -172,6 +178,7 @@ int app_bt_init(const struct app_bt_cb *callbacks)
 
 	if (callbacks) {
 		app_callback_take_picture = callbacks->take_picture;
+		app_callback_change_resolution = callbacks->change_resolution;
 	}
 
 	err = bt_enable(NULL);
@@ -179,7 +186,7 @@ int app_bt_init(const struct app_bt_cb *callbacks)
 		return err;
 	}
 
-	LOG_INF("Bluetooth initialized");
+	LOG_DBG("Bluetooth initialized");
 
 	bt_gatt_cb_register(&gatt_cb);
 

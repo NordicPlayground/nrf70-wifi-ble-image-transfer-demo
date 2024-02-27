@@ -26,7 +26,7 @@
 
 #include <zephyr/logging/log.h>
 
-LOG_MODULE_REGISTER(bt_its, LOG_LEVEL_DBG);
+LOG_MODULE_REGISTER(bt_its, LOG_LEVEL_INF);
 
 static bool                   notify_enabled[2];
 static struct bt_its_cb       its_cb;
@@ -125,7 +125,6 @@ int bt_its_send_img_data(struct bt_conn *conn, uint8_t *buf, uint16_t length, ui
 {
 	int err;
 	uint8_t *current_buf = buf;
-	int cnt = 0;
 
 	LOG_DBG("IMG buf length %i", length);
 	while (length > le_max_length) {
@@ -137,7 +136,7 @@ int bt_its_send_img_data(struct bt_conn *conn, uint8_t *buf, uint16_t length, ui
 		current_buf += le_max_length;
 		length -= le_max_length;
 	}
-	
+
 	LOG_DBG("Notify TX remaining %i bytes", length);
 	err = bt_gatt_notify(NULL, &its_svc.attrs[2], current_buf, length);
 	if (err < 0) {
