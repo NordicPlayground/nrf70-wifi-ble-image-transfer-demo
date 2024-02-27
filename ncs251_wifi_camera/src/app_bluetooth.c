@@ -136,11 +136,21 @@ static void le_data_length_updated(struct bt_conn *conn,
 	LOG_INF("Notification data length set to %i bytes", le_tx_data_length);
 }
 
+static void le_phy_updated(struct bt_conn *conn,
+			   struct bt_conn_le_phy_info *param)
+{
+	LOG_INF("LE PHY updated: TX PHY %i, RX PHY %i\n", param->tx_phy, param->rx_phy);
+	ble_params_info.tx_phy = param->tx_phy;
+	ble_params_info.rx_phy = param->rx_phy;
+	schedule_ble_params_info_update();
+}
+
 BT_CONN_CB_DEFINE(conn_callbacks) = {
 	.connected    = connected,
 	.disconnected = disconnected,
 	.le_param_updated = connection_param_update,
 	.le_data_len_updated = le_data_length_updated,
+	.le_phy_updated = le_phy_updated,
 };
 
 void schedule_ble_params_info_update(void)
@@ -196,6 +206,10 @@ static void app_bt_thread_func(void)
 					break;
 				case ITS_RX_CMD_CHANGE_PHY:
 					LOG_DBG("ITS RX CMD: Change phy");
+					err = bt_conn_le_phy_update(current_conn, (app_cmd.its_rx_event.data[0] == 2) ? BT_CONN_LE_PHY_PARAM_2M : BT_CONN_LE_PHY_PARAM_1M);
+					if (err) {
+						LOG_ERR("Phy update request failed: %d",  err);
+					}
 					break;
 				case ITS_RX_CMD_SEND_BLE_PARAMS:
 					LOG_DBG("ITS RX CMD: Send ble params");
