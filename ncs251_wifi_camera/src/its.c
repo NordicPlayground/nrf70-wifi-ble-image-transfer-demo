@@ -31,6 +31,7 @@ LOG_MODULE_REGISTER(bt_its, LOG_LEVEL_INF);
 static bool                   notify_enabled[2];
 static struct bt_its_cb       its_cb;
 static struct its_rx_cb_evt_t cb_evt;
+static struct its_ble_params_info_t scheduled_params = {.con_interval = 0};
 
 static void its_tx_ccc_changed(const struct bt_gatt_attr *attr,
 				  uint16_t value)
@@ -44,6 +45,10 @@ static void its_img_info_ccc_changed(const struct bt_gatt_attr *attr,
 {
 	LOG_DBG("Notify updated on img info char, handle %i, value %i", attr->handle, value);
 	notify_enabled[1] = (value == BT_GATT_CCC_NOTIFY);
+	if (scheduled_params.con_interval != 0) {
+		bt_its_send_ble_params_info(&scheduled_params);
+		scheduled_params.con_interval = 0;
+	}
 }
 
 static ssize_t its_rx_received(struct bt_conn *conn,
@@ -168,7 +173,11 @@ int bt_its_send_ble_params_info(struct its_ble_params_info_t* ble_params_info)
 	uint8_t notify_buf[1 + sizeof(struct its_ble_params_info_t)];
 
 	if (!notify_enabled[1]) {
-		return -EACCES;
+		// If notifications have not yet been enabled, schedule the params to be sent later
+		scheduled_params = *ble_params_info;
+		LOG_DBG("Scheduling params info for later");
+		
+		return 0;
 	}
 
 	notify_buf[0] = ITS_IMG_INFO_DATA_TYPE_BLE_PARAMS;

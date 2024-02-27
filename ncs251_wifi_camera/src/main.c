@@ -400,7 +400,6 @@ uint8_t process_udp_rx_buffer(char *udp_rx_buf, char *command_buf)
 void app_bt_take_picture_callback(void)
 {
 	LOG_INF("TAKE PICTURE");
-	//set_mega_resolution(0x1A);
 	video_stream_start(video);
 	take_picture_bt();
 	video_stream_stop(video);
