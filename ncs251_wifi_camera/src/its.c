@@ -121,23 +121,23 @@ int bt_its_init(struct bt_its_cb *callbacks)
 	return 0;
 }
 
-int bt_its_send_img_data(struct bt_conn *conn, uint8_t *buf, uint16_t length)
+int bt_its_send_img_data(struct bt_conn *conn, uint8_t *buf, uint16_t length, uint16_t le_max_length)
 {
 	int err;
 	uint8_t *current_buf = buf;
-	int maxlen = 20;
 	int cnt = 0;
+
 	LOG_DBG("IMG buf length %i", length);
-	
-	while (length > maxlen) {
-		LOG_DBG("Notify TX: Len %i, Remaining: %i", maxlen, length);
-		err = bt_gatt_notify(NULL, &its_svc.attrs[2], current_buf, maxlen);
+	while (length > le_max_length) {
+		LOG_DBG("Notify TX: Len %i, Remaining: %i", le_max_length, length);
+		err = bt_gatt_notify(NULL, &its_svc.attrs[2], current_buf, le_max_length);
 		if (err < 0) {
 			LOG_ERR("BT notify error: %i", err);
 		}
-		current_buf += maxlen;
-		length -= maxlen;
+		current_buf += le_max_length;
+		length -= le_max_length;
 	}
+	
 	LOG_DBG("Notify TX remaining %i bytes", length);
 	err = bt_gatt_notify(NULL, &its_svc.attrs[2], current_buf, length);
 	if (err < 0) {

@@ -171,9 +171,7 @@ int take_picture_bt(void)
 
 	f_status = vbuf->flags;
 
-	head_and_tail[2] = 0x01;
 	app_bt_send_picture_header(vbuf->bytesframe);
-	//app_bt_send_picture_data(head_and_tail, 3);
 
 	target_resolution = (((current_resolution & 0x0f) << 4) | 0x01);
 
@@ -188,7 +186,6 @@ int take_picture_bt(void)
 		app_bt_send_picture_data(vbuf->buffer, vbuf->bytesused);
 		video_enqueue(video, VIDEO_EP_OUT, vbuf);
 	}
-	//app_bt_send_picture_data(&head_and_tail[3], 2);
 
 	return 0;
 }

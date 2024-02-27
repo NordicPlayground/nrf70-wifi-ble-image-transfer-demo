@@ -16,7 +16,11 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME, LOG_LEVEL_DBG);
 #define DEVICE_NAME_LEN	(sizeof(DEVICE_NAME) - 1)
 
 static struct bt_conn *current_conn;
+
 static app_bt_take_picture_cb app_callback_take_picture;
+
+// In order to maximize data throughput, scale the notifications after the TX data length
+static int le_tx_data_length = 20;
 
 K_MSGQ_DEFINE(msgq_its_rx_commands, sizeof(struct its_rx_cb_evt_t), 8, 4);
 
@@ -38,6 +42,15 @@ static struct bt_gatt_cb gatt_cb = {
 	.att_mtu_updated = att_mtu_updated,
 };
 
+static void mtu_exchange_cb(struct bt_conn *conn, uint8_t err, struct bt_gatt_exchange_params *params)
+{
+	if (!err) {
+		LOG_INF("MTU exchange successful. %i bytes", bt_gatt_get_mtu(current_conn) - 3); 
+	} else {
+		LOG_WRN("MTU exchange failed (err %" PRIu8 ")", err);
+	}
+}
+
 static void connected(struct bt_conn *conn, uint8_t err)
 {
 	char addr[BT_ADDR_LE_STR_LEN];
@@ -51,16 +64,21 @@ static void connected(struct bt_conn *conn, uint8_t err)
 	LOG_INF("Connected %s", addr);
 
 	current_conn = bt_conn_ref(conn);
-#if 0
-	exchange_params.func = exchange_func;
 
-	err = bt_gatt_exchange_mtu(default_conn, &exchange_params);
+	static struct bt_gatt_exchange_params exchange_params;
+	exchange_params.func = mtu_exchange_cb;
+
+	err = bt_gatt_exchange_mtu(conn, &exchange_params);
 	if (err) {
 		printk("MTU exchange failed (err %d)\n", err);
 	} else {
 		printk("MTU exchange pending\n");
 	}
-#endif
+
+	err = bt_conn_le_data_len_update(conn, BT_LE_DATA_LEN_PARAM_MAX);
+	if (err) {
+		LOG_ERR("LE data length update request failed: %d",  err);
+	}
 }
 
 static void disconnected(struct bt_conn *conn, uint8_t reason)
@@ -77,17 +95,28 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 	}
 }
 
-void connection_param_update (struct bt_conn *conn, uint16_t interval,
-				 uint16_t latency, uint16_t timeout)
+static void connection_param_update(struct bt_conn *conn, uint16_t interval, uint16_t latency, uint16_t timeout)
 {
-	LOG_INF("Connection paramaters updated. The new connection interval is %d ms", (int) (interval*1.25f));
+	LOG_INF("Con params updated. Connection interval %d ms, latency %i, timeout %i ms", (int) ((float)interval*1.25f), latency, timeout * 10);
 }
 
+static void le_data_length_updated(struct bt_conn *conn,
+				   struct bt_conn_le_data_len_info *info)
+{
+	LOG_INF("LE data length updated: TX (len: %d time: %d) RX (len: %d time: %d)", 
+			info->tx_max_len, info->tx_max_time, info->rx_max_len, info->rx_max_time);
+
+	// Set the TX data length, which will determine the size of image data transfers. 
+	// Subtract 3 bytes for ATT header and 4 bytes for L2CAP header. 
+	le_tx_data_length = info->tx_max_len - 7;
+	LOG_INF("Notification data length set to %i bytes", le_tx_data_length);
+}
 
 BT_CONN_CB_DEFINE(conn_callbacks) = {
 	.connected    = connected,
 	.disconnected = disconnected,
 	.le_param_updated = connection_param_update,
+	.le_data_len_updated = le_data_length_updated,
 };
 
 void its_rx_callback(struct its_rx_cb_evt_t *evt)
@@ -181,8 +210,8 @@ int app_bt_send_picture_header(uint32_t pic_size)
 
 int app_bt_send_picture_data(uint8_t *buf, uint16_t len)
 {
-	return bt_its_send_img_data(current_conn, buf, len);
+	return bt_its_send_img_data(current_conn, buf, len, le_tx_data_length);
 }
 
-K_THREAD_DEFINE(app_bt_thread, 4096, app_bt_thread_func, NULL, NULL, NULL, 
+K_THREAD_DEFINE(app_bt_thread, 2048, app_bt_thread_func, NULL, NULL, NULL, 
 				K_PRIO_PREEMPT(K_LOWEST_APPLICATION_THREAD_PRIO), 0, 0);

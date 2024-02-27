@@ -67,7 +67,7 @@ struct its_ble_params_info_t {
 
 int bt_its_init(struct bt_its_cb *callbacks);
 
-int bt_its_send_img_data(struct bt_conn *conn, uint8_t *buf, uint16_t length);
+int bt_its_send_img_data(struct bt_conn *conn, uint8_t *buf, uint16_t length, uint16_t le_max_length);
 
 int bt_its_send_img_info(struct its_img_info_t *img_info);
 
