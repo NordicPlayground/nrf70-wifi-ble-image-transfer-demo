@@ -397,6 +397,12 @@ uint8_t process_udp_rx_buffer(char *udp_rx_buf, char *command_buf)
 }
 
 // Bluetooth callbacks
+void app_bt_connected_callback(void)
+{	
+	// Set the camera to the default app resolution
+	set_mega_resolution(0x11);
+}
+
 void app_bt_take_picture_callback(void)
 {
 	LOG_INF("TAKE PICTURE");
@@ -412,6 +418,7 @@ void app_bt_change_resolution_callback(uint8_t resolution)
 }
 
 const struct app_bt_cb app_bt_callbacks = {
+	.connected = app_bt_connected_callback,
     .take_picture = app_bt_take_picture_callback,
 	.change_resolution = app_bt_change_resolution_callback,
 };
