@@ -20,14 +20,16 @@ static const struct bt_le_conn_param *conn_param = BT_LE_CONN_PARAM(9, 9, 0, 400
 static struct bt_conn *current_conn;
 
 static app_bt_connected_cb app_callback_connected;
+static app_bt_disconnected_cb app_callback_disconnected;
 static app_bt_take_picture_cb app_callback_take_picture;
+static app_bt_enable_stream_cb app_callback_enable_stream;
 static app_bt_change_resolution_cb app_callback_change_resolution;
 static struct its_ble_params_info_t ble_params_info = {.con_interval = 0, .mtu = 23, .tx_phy = 1, .rx_phy = 1};
 
 // In order to maximize data throughput, scale the notifications after the TX data length
 static int le_tx_data_length = 20;
 
-enum app_bt_internal_commands {APP_BT_INT_ITS_RX_EVT, APP_BT_INT_SCHEDULE_CONNECTED_CB, APP_BT_INT_SCHEDULE_BLE_PARAMS_INFO_UPDATE};
+enum app_bt_internal_commands {APP_BT_INT_ITS_RX_EVT, APP_BT_INT_SCHEDULE_CONNECTED_CB, APP_BT_INT_SCHEDULE_DISCONNECTED_CB, APP_BT_INT_SCHEDULE_BLE_PARAMS_INFO_UPDATE};
 static struct its_rx_cb_evt_t internal_command_evt;
 
 void schedule_ble_params_info_update(void);
@@ -46,6 +48,16 @@ static const struct bt_data ad[] = {
 static const struct bt_data sd[] = {
 	BT_DATA_BYTES(BT_DATA_UUID128_ALL, BT_UUID_ITS_VAL),
 };
+
+static int schedule_internal_command(enum app_bt_internal_commands command)
+{
+	internal_command_evt.command = command;
+	if (k_msgq_put(&msgq_its_rx_commands, &internal_command_evt, K_NO_WAIT) != 0){
+		LOG_ERR("RX cmd message queue full!");
+		return -ENOMEM;
+	}
+	return 0;
+}
 
 void att_mtu_updated(struct bt_conn *conn, uint16_t tx, uint16_t rx)
 {
@@ -100,10 +112,7 @@ static void connected(struct bt_conn *conn, uint8_t err)
 		LOG_ERR("Cannot update connection parameter (err: %d)", err);
 	}
 
-	internal_command_evt.command = APP_BT_INT_SCHEDULE_CONNECTED_CB;
-	if (k_msgq_put(&msgq_its_rx_commands, &internal_command_evt, K_NO_WAIT) != 0){
-		LOG_ERR("RX cmd message queue full!");
-	}
+	schedule_internal_command(APP_BT_INT_SCHEDULE_CONNECTED_CB);
 }
 
 static void disconnected(struct bt_conn *conn, uint8_t reason)
@@ -118,6 +127,8 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 		bt_conn_unref(current_conn);
 		current_conn = NULL;
 	}
+
+	schedule_internal_command(APP_BT_INT_SCHEDULE_DISCONNECTED_CB);
 }
 
 static void connection_param_update(struct bt_conn *conn, uint16_t interval, uint16_t latency, uint16_t timeout)
@@ -198,9 +209,15 @@ static void app_bt_thread_func(void)
 					break;
 				case ITS_RX_CMD_START_STREAM:
 					LOG_DBG("ITS RX CMD: Start Stream");
+					if (app_callback_enable_stream) {
+						app_callback_enable_stream(true);
+					}
 					break;
 				case ITS_RX_CMD_STOP_STREAM:
 					LOG_DBG("ITS RX CMD: Stop stream");
+					if (app_callback_enable_stream) {
+						app_callback_enable_stream(false);
+					}
 					break;
 				case ITS_RX_CMD_CHANGE_RESOLUTION:
 					LOG_DBG("ITS RX CMD: Change res");
@@ -225,14 +242,26 @@ static void app_bt_thread_func(void)
 					LOG_ERR("CMD:Invalid command!");
 					break;
 			}
-		} else if(app_cmd.command == APP_BT_INT_SCHEDULE_CONNECTED_CB) {
-			if (app_callback_connected) {
-				app_callback_connected();
-			}
-		} else if(app_cmd.command == APP_BT_INT_SCHEDULE_BLE_PARAMS_INFO_UPDATE) {
-			err = bt_its_send_ble_params_info(&ble_params_info);	
-			if (err) {
-				LOG_ERR("Error sending ble params");
+		} else {
+			switch (app_cmd.command) {
+				case APP_BT_INT_SCHEDULE_CONNECTED_CB:
+					if (app_callback_connected) {
+						app_callback_connected();
+					}
+					break;
+				case APP_BT_INT_SCHEDULE_DISCONNECTED_CB:
+					if (app_callback_disconnected) {
+						app_callback_disconnected();
+					}
+					break;
+				case APP_BT_INT_SCHEDULE_BLE_PARAMS_INFO_UPDATE:
+					err = bt_its_send_ble_params_info(&ble_params_info);	
+					if (err) {
+						LOG_ERR("Error sending ble params");
+					}
+					break;
+				default:
+					break;
 			}
 		}
 	}
@@ -244,7 +273,9 @@ int app_bt_init(const struct app_bt_cb *callbacks)
 
 	if (callbacks) {
 		app_callback_connected = callbacks->connected;
+		app_callback_disconnected = callbacks->disconnected;
 		app_callback_take_picture = callbacks->take_picture;
+		app_callback_enable_stream = callbacks->enable_stream;
 		app_callback_change_resolution = callbacks->change_resolution;
 	}
 

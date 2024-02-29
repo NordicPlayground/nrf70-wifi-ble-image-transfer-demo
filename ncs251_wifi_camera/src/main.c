@@ -68,6 +68,11 @@ struct video_buffer *vbuf;
 volatile uint8_t preview_on;
 volatile uint8_t capture_flag;
 
+static enum APP_MODE {
+	APP_MODE_BLE,
+	APP_MODE_UDP
+} app_mode_current = APP_MODE_UDP;
+
 const uint32_t pixel_format_table[] = {
 	VIDEO_PIX_FMT_JPEG,
 	VIDEO_PIX_FMT_RGB565,
@@ -121,7 +126,7 @@ int set_mega_resolution(uint8_t sfmt)
 	return video_set_format(video, VIDEO_EP_OUT, &fmt);
 }
 
-int take_picture(void)
+int take_picture()
 {
 	int err;
 	enum video_frame_fragmented_status f_status;
@@ -209,18 +214,29 @@ void video_preview(void)
 	if (capture_flag == 1)
 	{
 		capture_flag = 0;
-		head_and_tail[2] = 0x01;
-		send(socket_send, &head_and_tail[0], 3, 0);
-		send(socket_send, (uint8_t *)&vbuf->bytesframe, 4, 0);
-		target_resolution = (((current_resolution & 0x0f) << 4) | 0x01);
-		send(socket_send, &target_resolution, 1, 0);
+
+		if (app_mode_current == APP_MODE_BLE) {
+			app_bt_send_picture_header(vbuf->bytesframe);
+		} else {
+			head_and_tail[2] = 0x01;
+			send(socket_send, &head_and_tail[0], 3, 0);
+			send(socket_send, (uint8_t *)&vbuf->bytesframe, 4, 0);
+			target_resolution = (((current_resolution & 0x0f) << 4) | 0x01);
+			send(socket_send, &target_resolution, 1, 0);
+		}
 	}
 
-	send(socket_send, vbuf->buffer, vbuf->bytesused, 0);
+	if (app_mode_current == APP_MODE_BLE) {
+		app_bt_send_picture_data(vbuf->buffer, vbuf->bytesused);
+	} else {
+		send(socket_send, vbuf->buffer, vbuf->bytesused, 0);
+	}
 
 	if (f_status == VIDEO_BUF_EOF)
 	{
-		send(socket_send, &head_and_tail[3], 2, 0);
+		if (app_mode_current == APP_MODE_UDP) {
+			send(socket_send, &head_and_tail[3], 2, 0);
+		}
 		capture_flag = 1;
 	}
 
@@ -400,7 +416,15 @@ uint8_t process_udp_rx_buffer(char *udp_rx_buf, char *command_buf)
 void app_bt_connected_callback(void)
 {	
 	// Set the camera to the default app resolution
+	LOG_INF("Bluetooth connection established. Entering BLE app mode");
 	set_mega_resolution(0x11);
+	app_mode_current = APP_MODE_BLE;
+}
+
+void app_bt_disconnected_callback(void)
+{
+	LOG_INF("Bluetooth disconnected. Entering UDP app mode");
+	app_mode_current = APP_MODE_UDP;
 }
 
 void app_bt_take_picture_callback(void)
@@ -411,6 +435,28 @@ void app_bt_take_picture_callback(void)
 	video_stream_stop(video);
 }
 
+void app_bt_enable_stream_callback(bool enable)
+{
+	static bool stream_running = false;
+
+	// If we are already in the same state, exit
+	if(enable == stream_running) return;
+	
+	stream_running = enable;
+
+	if (enable) {
+		LOG_INF("Starting stream!");
+		set_mega_resolution(0x1 | 0x10);
+		video_stream_start(video);
+		capture_flag = 1;
+		preview_on = 1;
+	} else {
+		LOG_INF("Stopping stream");
+		video_stream_stop(video);
+		preview_on = 0;
+	}
+}
+
 void app_bt_change_resolution_callback(uint8_t resolution)
 {
 	LOG_INF("Change resolution to %i", resolution);
@@ -419,7 +465,9 @@ void app_bt_change_resolution_callback(uint8_t resolution)
 
 const struct app_bt_cb app_bt_callbacks = {
 	.connected = app_bt_connected_callback,
+	.disconnected = app_bt_disconnected_callback,
     .take_picture = app_bt_take_picture_callback,
+	.enable_stream = app_bt_enable_stream_callback,
 	.change_resolution = app_bt_change_resolution_callback,
 };
 
@@ -464,31 +512,40 @@ int main(void)
 		video_enqueue(video, VIDEO_EP_OUT, buffers[i]);
 	}
 
-	k_sem_take(&sockets_ready, K_FOREVER);
+	//k_sem_take(&sockets_ready, K_FOREVER);
 
 	while (1)
 	{
-		ret = k_msgq_get(&udp_recv_queue, &udp_recv_buf, K_FOREVER);
-		if (ret == 0)
-		{
-			ret = process_udp_rx_buffer(udp_recv_buf, command_buf);
-			if (ret > 0)
+		if (app_mode_current == APP_MODE_UDP) {
+			ret = k_msgq_get(&udp_recv_queue, &udp_recv_buf, K_USEC(10));
+			if (ret == 0)
 			{
-				LOG_INF("Valid command received. Length:%d", ret);
-				LOG_HEXDUMP_INF(command_buf, ret, "Data: ");
-				recv_process(command_buf);
+				ret = process_udp_rx_buffer(udp_recv_buf, command_buf);
+				if (ret > 0)
+				{
+					LOG_INF("Valid command received. Length:%d", ret);
+					LOG_HEXDUMP_INF(command_buf, ret, "Data: ");
+					recv_process(command_buf);
+				}
+				else
+				{
+					LOG_INF("No valid command reviced");
+				}
 			}
-			else
+			if (preview_on == 1)
 			{
-				LOG_INF("No valid command reviced");
+				video_preview();
+			}			
+			k_yield();
+		} else if (app_mode_current == APP_MODE_BLE) {
+			if (preview_on == 1)
+			{
+				LOG_INF("Video_preview");
+				video_preview();
+			} else {
+				k_msleep(100);
 			}
 		}
-		if (preview_on == 1)
-		{
-			LOG_INF("Video_preview");
-			video_preview();
-		}
-		//k_yield();
 	}
 	return 0;
 }
