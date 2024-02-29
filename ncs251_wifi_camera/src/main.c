@@ -65,8 +65,9 @@ static uint8_t head_and_tail[] = {0xff, 0xaa, 0x00, 0xff, 0xbb};
 const struct device *video;
 struct video_buffer *vbuf;
 
-volatile uint8_t preview_on;
-volatile uint8_t capture_flag;
+static bool preview_on = false;
+static bool capture_flag = false;
+static bool request_stream_stop = false;
 
 static enum APP_MODE {
 	APP_MODE_BLE,
@@ -126,7 +127,7 @@ int set_mega_resolution(uint8_t sfmt)
 	return video_set_format(video, VIDEO_EP_OUT, &fmt);
 }
 
-int take_picture()
+int take_picture(enum APP_MODE mode)
 {
 	int err;
 	enum video_frame_fragmented_status f_status;
@@ -140,62 +141,39 @@ int take_picture()
 
 	f_status = vbuf->flags;
 
-	head_and_tail[2] = 0x01;
-	send(socket_send, &head_and_tail[0], 3, 0);
-	send(socket_send, (uint8_t *)&vbuf->bytesframe, 4, 0);
-
-	target_resolution = (((current_resolution & 0x0f) << 4) | 0x01);
-	send(socket_send, &target_resolution, 1, 0);
-
-	send(socket_send, vbuf->buffer, vbuf->bytesused, 0);
-
-	video_enqueue(video, VIDEO_EP_OUT, vbuf);
-	while (f_status == VIDEO_BUF_FRAG)
-	{
-		video_dequeue(video, VIDEO_EP_OUT, &vbuf, K_FOREVER);
-		f_status = vbuf->flags;
+	if (mode == APP_MODE_UDP) {
+		head_and_tail[2] = 0x01;
+		send(socket_send, &head_and_tail[0], 3, 0);
+		send(socket_send, (uint8_t *)&vbuf->bytesframe, 4, 0);
+		target_resolution = (((current_resolution & 0x0f) << 4) | 0x01);
+		send(socket_send, &target_resolution, 1, 0);
 		send(socket_send, vbuf->buffer, vbuf->bytesused, 0);
-		video_enqueue(video, VIDEO_EP_OUT, vbuf);
+	} else {
+		app_bt_send_picture_header(vbuf->bytesframe);
+		app_bt_send_picture_data(vbuf->buffer, vbuf->bytesused);
 	}
-	send(socket_send, &head_and_tail[3], 2, 0);
-
-	return 0;
-}
-
-int take_picture_bt(void)
-{
-	int err;
-	enum video_frame_fragmented_status f_status;
-
-	err = video_dequeue(video, VIDEO_EP_OUT, &vbuf, K_MSEC(1000));
-	if (err)
-	{
-		LOG_ERR("Unable to dequeue video buf");
-		return -1;
-	}
-
-	f_status = vbuf->flags;
-
-	app_bt_send_picture_header(vbuf->bytesframe);
-
-	target_resolution = (((current_resolution & 0x0f) << 4) | 0x01);
-
-	app_bt_send_picture_data(vbuf->buffer, vbuf->bytesused);
 
 	video_enqueue(video, VIDEO_EP_OUT, vbuf);
 	while (f_status == VIDEO_BUF_FRAG)
 	{
 		video_dequeue(video, VIDEO_EP_OUT, &vbuf, K_FOREVER);
 		f_status = vbuf->flags;
-
-		app_bt_send_picture_data(vbuf->buffer, vbuf->bytesused);
+		if (mode == APP_MODE_UDP) {
+			send(socket_send, vbuf->buffer, vbuf->bytesused, 0);
+		} else {
+			app_bt_send_picture_data(vbuf->buffer, vbuf->bytesused);
+		}
 		video_enqueue(video, VIDEO_EP_OUT, vbuf);
+	}
+
+	if (mode == APP_MODE_UDP) {
+		send(socket_send, &head_and_tail[3], 2, 0);
 	}
 
 	return 0;
 }
 
-void video_preview(void)
+void video_preview(enum APP_MODE mode)
 {
 	int err;
 	enum video_frame_fragmented_status f_status;
@@ -210,12 +188,12 @@ void video_preview(void)
 		return;
 	}
 	f_status = vbuf->flags;
-	// LOG_INF("f_status%d",f_status);
-	if (capture_flag == 1)
-	{
-		capture_flag = 0;
 
-		if (app_mode_current == APP_MODE_BLE) {
+	if (capture_flag)
+	{
+		capture_flag = false;
+
+		if (mode == APP_MODE_BLE) {
 			app_bt_send_picture_header(vbuf->bytesframe);
 		} else {
 			head_and_tail[2] = 0x01;
@@ -226,7 +204,7 @@ void video_preview(void)
 		}
 	}
 
-	if (app_mode_current == APP_MODE_BLE) {
+	if (mode == APP_MODE_BLE) {
 		app_bt_send_picture_data(vbuf->buffer, vbuf->bytesused);
 	} else {
 		send(socket_send, vbuf->buffer, vbuf->bytesused, 0);
@@ -234,10 +212,16 @@ void video_preview(void)
 
 	if (f_status == VIDEO_BUF_EOF)
 	{
-		if (app_mode_current == APP_MODE_UDP) {
+		if (mode == APP_MODE_UDP) {
 			send(socket_send, &head_and_tail[3], 2, 0);
 		}
-		capture_flag = 1;
+		capture_flag = true;
+
+		if(request_stream_stop) {
+			request_stream_stop = false;
+			video_stream_stop(video);
+			preview_on = false;
+		}
 	}
 
 	err = video_enqueue(video, VIDEO_EP_OUT, vbuf);
@@ -304,15 +288,15 @@ uint8_t recv_process(uint8_t *buff)
 		break;
 	case SET_VIDEO_RESOLUTION:
 		LOG_INF("camcmd: SET_VIDEO_RESOLUTION");
-		if (preview_on == 0)
+		if (!preview_on)
 		{
 			LOG_INF("SET_VIDEO_RESOLUTION preview_on");
 			set_mega_resolution(buff[1] | 0x10);
 			video_stream_start(video);
 			LOG_INF("start video stream");
-			capture_flag = 1;
+			capture_flag = true;
 		}
-		preview_on = 1;
+		preview_on = true;
 		break;
 	case SET_BRIGHTNESS:
 		video_set_ctrl(video, VIDEO_CID_CAMERA_BRIGHTNESS, &buff[1]);
@@ -356,7 +340,7 @@ uint8_t recv_process(uint8_t *buff)
 		break;
 	case TAKE_PICTURE:
 		video_stream_start(video);
-		take_picture();
+		take_picture(APP_MODE_UDP);
 		video_stream_stop(video);
 		LOG_INF("take picture");
 		break;
@@ -368,7 +352,7 @@ uint8_t recv_process(uint8_t *buff)
 			set_mega_resolution(take_picture_fmt);
 			LOG_INF("start video stream");
 		}
-		preview_on = 0;
+		preview_on = false;
 		break;
 	case RESET_CAMERA:
 		video_set_ctrl(video, VIDEO_CID_ARDUCAM_RESET, NULL);
@@ -412,18 +396,32 @@ uint8_t process_udp_rx_buffer(char *udp_rx_buf, char *command_buf)
 	return command_length;
 }
 
-// Bluetooth callbacks
 void app_bt_connected_callback(void)
 {	
-	// Set the camera to the default app resolution
 	LOG_INF("Bluetooth connection established. Entering BLE app mode");
+
+	// If we are in streaming mode, stop the streaming
+	if (preview_on) {
+		video_stream_stop(video);
+		preview_on = false;
+	}
+
+	// Set the default resolution for the BT app
 	set_mega_resolution(0x11);
+
 	app_mode_current = APP_MODE_BLE;
 }
 
 void app_bt_disconnected_callback(void)
 {
 	LOG_INF("Bluetooth disconnected. Entering UDP app mode");
+	
+	// If we are in streaming mode, stop the streaming
+	if (preview_on) {
+		video_stream_stop(video);
+		preview_on = false;
+	}
+
 	app_mode_current = APP_MODE_UDP;
 }
 
@@ -431,29 +429,23 @@ void app_bt_take_picture_callback(void)
 {
 	LOG_INF("TAKE PICTURE");
 	video_stream_start(video);
-	take_picture_bt();
+	take_picture(APP_MODE_BLE);
 	video_stream_stop(video);
 }
 
 void app_bt_enable_stream_callback(bool enable)
 {
-	static bool stream_running = false;
-
 	// If we are already in the same state, exit
-	if(enable == stream_running) return;
+	if(enable == preview_on) return;
 	
-	stream_running = enable;
-
 	if (enable) {
 		LOG_INF("Starting stream!");
-		set_mega_resolution(0x1 | 0x10);
 		video_stream_start(video);
-		capture_flag = 1;
-		preview_on = 1;
+		capture_flag = true;
+		preview_on = true;
 	} else {
 		LOG_INF("Stopping stream");
-		video_stream_stop(video);
-		preview_on = 0;
+		request_stream_stop = true;
 	}
 }
 
@@ -534,14 +526,13 @@ int main(void)
 			}
 			if (preview_on == 1)
 			{
-				video_preview();
+				video_preview(APP_MODE_UDP);
 			}			
 			k_yield();
 		} else if (app_mode_current == APP_MODE_BLE) {
 			if (preview_on == 1)
 			{
-				LOG_INF("Video_preview");
-				video_preview();
+				video_preview(APP_MODE_BLE);
 			} else {
 				k_msleep(100);
 			}
