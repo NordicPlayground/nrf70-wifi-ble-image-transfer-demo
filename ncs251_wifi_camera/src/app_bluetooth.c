@@ -228,8 +228,8 @@ static void app_bt_thread_func(void)
 					}
 					break;
 				case ITS_RX_CMD_CHANGE_PHY:
-					LOG_DBG("ITS RX CMD: Change phy");
-					err = bt_conn_le_phy_update(current_conn, (app_cmd.its_rx_event.data[0] == 2) ? BT_CONN_LE_PHY_PARAM_2M : BT_CONN_LE_PHY_PARAM_1M);
+					LOG_DBG("ITS RX CMD: Change phy (%i)", app_cmd.its_rx_event.data[0]);
+					err = bt_conn_le_phy_update(current_conn, (app_cmd.its_rx_event.data[0] == 1) ? BT_CONN_LE_PHY_PARAM_2M : BT_CONN_LE_PHY_PARAM_1M);
 					if (err) {
 						LOG_ERR("Phy update request failed: %d",  err);
 					}
