@@ -222,9 +222,7 @@ static void app_bt_thread_func(void)
 				case ITS_RX_CMD_CHANGE_RESOLUTION:
 					LOG_DBG("ITS RX CMD: Change res");
 					if (app_callback_change_resolution) {
-						uint8_t res = app_cmd.its_rx_event.data[0];
-						if (res >= 5) res = 6; 
-						app_callback_change_resolution(res);
+						app_callback_change_resolution(app_cmd.its_rx_event.data[0]);
 					}
 					break;
 				case ITS_RX_CMD_CHANGE_PHY:
