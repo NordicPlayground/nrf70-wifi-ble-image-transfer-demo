@@ -133,13 +133,20 @@ int set_mega_resolution(uint8_t sfmt)
 
 void send_picture_data_udp(uint8_t *data, int length)
 {
-	send(socket_send, data, length, 0); 
 	counted_bytes_sent += length;
+	while (length >= 1024) {
+		send(socket_send, data, 1024, 0); 
+		data += 1024;
+		length -= 1024;
+	}
+	if (length > 0) {
+		send(socket_send, data, length, 0); 
+	}
 }
 
 void send_picture_data_ble(uint8_t *data, int length)
 {
-	counted_bytes_sent += vbuf->bytesused;
+	counted_bytes_sent += length;
 	app_bt_send_picture_data(data, length);
 }
 
@@ -166,7 +173,7 @@ int take_picture(enum APP_MODE mode)
 		send_picture_data_udp(vbuf->buffer, vbuf->bytesused);
 	} else {
 		app_bt_send_picture_header(vbuf->bytesframe);
-		send_picture_data_udp(vbuf->buffer, vbuf->bytesused);
+		send_picture_data_ble(vbuf->buffer, vbuf->bytesused);
 	}
 
 	video_enqueue(video, VIDEO_EP_OUT, vbuf);
@@ -519,7 +526,7 @@ int main(void)
 	/* Alloc video buffers and enqueue for capture */
 	for (int i = 0; i < ARRAY_SIZE(buffers); i++)
 	{
-		buffers[i] = video_buffer_alloc(1024);
+		buffers[i] = video_buffer_alloc(4096);
 		if (buffers[i] == NULL)
 		{
 			LOG_ERR("Unable to alloc video buffer");
