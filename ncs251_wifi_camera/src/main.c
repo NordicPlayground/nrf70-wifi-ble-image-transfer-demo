@@ -74,6 +74,10 @@ static enum APP_MODE {
 	APP_MODE_UDP
 } app_mode_current = APP_MODE_UDP;
 
+static void on_timer_count_bytes_func(struct k_timer *timer);
+K_TIMER_DEFINE(m_timer_count_bytes, on_timer_count_bytes_func, NULL);
+static int counted_bytes_sent = 0;
+
 const uint32_t pixel_format_table[] = {
 	VIDEO_PIX_FMT_JPEG,
 	VIDEO_PIX_FMT_RGB565,
@@ -127,6 +131,18 @@ int set_mega_resolution(uint8_t sfmt)
 	return video_set_format(video, VIDEO_EP_OUT, &fmt);
 }
 
+void send_picture_data_udp(uint8_t *data, int length)
+{
+	send(socket_send, data, length, 0); 
+	counted_bytes_sent += length;
+}
+
+void send_picture_data_ble(uint8_t *data, int length)
+{
+	counted_bytes_sent += vbuf->bytesused;
+	app_bt_send_picture_data(data, length);
+}
+
 int take_picture(enum APP_MODE mode)
 {
 	int err;
@@ -144,13 +160,13 @@ int take_picture(enum APP_MODE mode)
 	if (mode == APP_MODE_UDP) {
 		head_and_tail[2] = 0x01;
 		send(socket_send, &head_and_tail[0], 3, 0);
-		send(socket_send, (uint8_t *)&vbuf->bytesframe, 4, 0);
+		send(socket_send, (uint8_t *)&vbuf->bytesframe, 4, 0); 
 		target_resolution = (((current_resolution & 0x0f) << 4) | 0x01);
 		send(socket_send, &target_resolution, 1, 0);
-		send(socket_send, vbuf->buffer, vbuf->bytesused, 0);
+		send_picture_data_udp(vbuf->buffer, vbuf->bytesused);
 	} else {
 		app_bt_send_picture_header(vbuf->bytesframe);
-		app_bt_send_picture_data(vbuf->buffer, vbuf->bytesused);
+		send_picture_data_udp(vbuf->buffer, vbuf->bytesused);
 	}
 
 	video_enqueue(video, VIDEO_EP_OUT, vbuf);
@@ -159,9 +175,9 @@ int take_picture(enum APP_MODE mode)
 		video_dequeue(video, VIDEO_EP_OUT, &vbuf, K_FOREVER);
 		f_status = vbuf->flags;
 		if (mode == APP_MODE_UDP) {
-			send(socket_send, vbuf->buffer, vbuf->bytesused, 0);
+			send_picture_data_udp(vbuf->buffer, vbuf->bytesused);
 		} else {
-			app_bt_send_picture_data(vbuf->buffer, vbuf->bytesused);
+			send_picture_data_ble(vbuf->buffer, vbuf->bytesused);
 		}
 		video_enqueue(video, VIDEO_EP_OUT, vbuf);
 	}
@@ -205,9 +221,9 @@ void video_preview(enum APP_MODE mode)
 	}
 
 	if (mode == APP_MODE_BLE) {
-		app_bt_send_picture_data(vbuf->buffer, vbuf->bytesused);
+		send_picture_data_ble(vbuf->buffer, vbuf->bytesused);
 	} else {
-		send(socket_send, vbuf->buffer, vbuf->bytesused, 0);
+		send_picture_data_udp(vbuf->buffer, vbuf->bytesused);
 	}
 
 	if (f_status == VIDEO_BUF_EOF)
@@ -463,6 +479,14 @@ const struct app_bt_cb app_bt_callbacks = {
 	.change_resolution = app_bt_change_resolution_callback,
 };
 
+static void on_timer_count_bytes_func(struct k_timer *timer)
+{
+	if (counted_bytes_sent > 0) {
+		LOG_INF("Data transferred: %i kbps", (counted_bytes_sent * 8) / 1024);
+		counted_bytes_sent = 0;
+	}
+}
+
 int main(void)
 {
 	int ret;
@@ -505,6 +529,8 @@ int main(void)
 	}
 
 	//k_sem_take(&sockets_ready, K_FOREVER);
+
+	k_timer_start(&m_timer_count_bytes, K_MSEC(1000), K_MSEC(1000));
 
 	while (1)
 	{
