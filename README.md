@@ -45,14 +45,14 @@ UDP Client(WiFiCamHost+PC):50005 <<-> UDP Server(WiFiCam+nRF7002DK):60006 = sock
 
 socket_recv is built by the UDP server to wait for the UDP client to connect to its address, then the server can know the client address. The server builds a new socket_send to send WiFiCam data like camera info, and video frame to the client. The previous socket_recv is used to receive commands from the UDP client. 
 
-## Install nRF Connect SDK(NCS) version 2.5.1
+## Install nRF Connect SDK(NCS) version 2.6.0
 
-Please refer to https://developer.nordicsemi.com/nRF_Connect_SDK/doc/2.5.1/nrf/installation.html
+Please refer to https://developer.nordicsemi.com/nRF_Connect_SDK/doc/2.6.0/nrf/installation.html
 
 ## Cherry pick ArduCAM Mega Zephyr driver
-
+Open a TERMINAL with nRF Connect environment at VS code, run the following commands.
 ```
-cd c:/NCS/v2.5.1/zephyr
+cd c:/NCS/v2.6.0/zephyr
 git remote add arducam https://github.com/ArduCAM/zephyr.git 
 git fetch arducam
 From https://github.com/ArduCAM/zephyr
