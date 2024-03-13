@@ -428,41 +428,23 @@ class WifiCamHostGUI(QMainWindow):
         layout_add.addWidget(self.connect_button)
 
     def capture_window(self, layout):
-        capture_tab = QTabWidget()
-        layout.addWidget(capture_tab)
+        capture_tab = QWidget()
+        capture_layout = QVBoxLayout()
 
-        # Video Tab
-        video_tab = QWidget()
-        video_layout = QVBoxLayout()
-
-        video_size_layout = QHBoxLayout()  # New layout for video size
+        video_size_layout = QHBoxLayout()  # Layout for video size
         video_size_label = QLabel("Video Size:")
         video_size_layout.addWidget(video_size_label)
         self.video_size_combobox = QComboBox()
-        #self.video_size_combobox.addItems(["96x96", "320x240", "320x320", "640x480"])
-        # Get first 5 items from dictionary 
         video_resolution_options = list(self.IMAGE_RESOLUTION_OPTIONS.items())[:5]
         self.video_size_combobox.addItems([size for _, size in video_resolution_options])
         video_size_layout.addWidget(self.video_size_combobox)
-        video_layout.addLayout(video_size_layout)  # Add the video size layout to the main video layout
+        capture_layout.addLayout(video_size_layout)
 
         # Add Capture Video Button
-        self.start_stream_button = QPushButton("Start Stream")
-        self.start_stream_button.setEnabled(False)
-        self.start_stream_button.clicked.connect(self.capture_video)
-        video_layout.addWidget(self.start_stream_button)
-
-        self.stop_stream_button = QPushButton("Stop Stream")
-        self.stop_stream_button.setEnabled(False)
-        self.stop_stream_button.clicked.connect(self.stop_stream)
-        video_layout.addWidget(self.stop_stream_button)
-
-        video_tab.setLayout(video_layout)
-        capture_tab.addTab(video_tab, "Video")
-
-        # Image Tab
-        image_tab = QWidget()
-        image_layout = QVBoxLayout()
+        self.stream_button = QPushButton("Start Stream")
+        self.stream_button.setEnabled(True)
+        self.stream_button.clicked.connect(self.toggle_stream)
+        capture_layout.addWidget(self.stream_button)
 
         # Image Format Layout
         image_format_layout = QHBoxLayout()
@@ -472,7 +454,7 @@ class WifiCamHostGUI(QMainWindow):
         image_format_options = list(self.IMAGE_FORMAT_OPTIONS.items())
         self.image_format_combobox.addItems([size for _, size in image_format_options])
         image_format_layout.addWidget(self.image_format_combobox)
-        image_layout.addLayout(image_format_layout)
+        capture_layout.addLayout(image_format_layout)
 
         # Image Size Layout
         image_size_layout = QHBoxLayout()
@@ -481,16 +463,28 @@ class WifiCamHostGUI(QMainWindow):
         self.image_size_combobox = QComboBox()
         self.image_size_combobox.addItems([size for _, size in self.IMAGE_RESOLUTION_OPTIONS.items()])
         image_size_layout.addWidget(self.image_size_combobox)
-        image_layout.addLayout(image_size_layout)
+        capture_layout.addLayout(image_size_layout)
 
         # Add Capture Image Button
-        self.capture_image_button = QPushButton("Capture Image")
-        self.capture_image_button.setEnabled(False)
+        self.capture_image_button = QPushButton("Take Picture")
+        self.capture_image_button.setEnabled(True)
         self.capture_image_button.clicked.connect(self.capture_image)
-        image_layout.addWidget(self.capture_image_button)
+        capture_layout.addWidget(self.capture_image_button)
 
-        image_tab.setLayout(image_layout)
-        capture_tab.addTab(image_tab, "Image")
+        capture_tab.setLayout(capture_layout)
+        layout.addWidget(capture_tab)
+    def toggle_stream(self):
+        if self.stream_button.text() == "Start Stream":
+                self.stream_button.setText("Stop Stream")
+                self.capture_image_button.setEnabled(False)
+                self.client.log_content_text.clear()
+                resolution_number = list(self.IMAGE_RESOLUTION_OPTIONS.keys())[
+                list(self.IMAGE_RESOLUTION_OPTIONS.values()).index(self.video_size_combobox.currentText())]
+                self.send_command(self.commands.command_start_streaming_mode(resolution_number))
+        else:
+                self.stream_button.setText("Start Stream")
+                self.capture_image_button.setEnabled(True)
+                self.send_command(self.commands.command_stop_stream())
 
     def command_input_window(self, layout, pre_filled_commands):
         label = QLabel("Commands:")
@@ -544,9 +538,6 @@ class WifiCamHostGUI(QMainWindow):
         
         # Display the received video frame
         if result.startswith("RECV: Connected to WiFi Camera!"):
-            #self.connect_button.setEnabled(False)
-            self.start_stream_button.setEnabled(True)
-            self.stop_stream_button.setEnabled(True)
             self.capture_image_button.setEnabled(True)
             
         # Display the received video frame
@@ -587,23 +578,11 @@ class WifiCamHostGUI(QMainWindow):
             return
         self.send_command(self.commands.command_get_camera_info())
 
-    def capture_video(self):
-        self.start_stream_button.setEnabled(False)
-        self.stop_stream_button.setEnabled(True)
-        self.client.log_content_text.clear()
-        resolution_number = list(self.IMAGE_RESOLUTION_OPTIONS.keys())[list(self.IMAGE_RESOLUTION_OPTIONS.values()).index(self.video_size_combobox.currentText())]
-        self.send_command(self.commands.command_start_streaming_mode(resolution_number))
-
     def capture_image(self):
         resolution_number = list(self.IMAGE_RESOLUTION_OPTIONS.keys())[list(self.IMAGE_RESOLUTION_OPTIONS.values()).index(self.image_size_combobox.currentText())]
         format_number = list(self.IMAGE_FORMAT_OPTIONS.keys())[list(self.IMAGE_FORMAT_OPTIONS.values()).index(self.image_format_combobox.currentText())]
         self.send_command(self.commands.command_set_picture_resolution(format_number,resolution_number))
         self.send_command(self.commands.command_take_picture())
-
-    def stop_stream(self):
-        self.start_stream_button.setEnabled(True)
-        self.stop_stream_button.setEnabled(False)
-        self.send_command(self.commands.command_stop_stream())
 
     def clear_log(self):
         if self.client.log_content_text:
