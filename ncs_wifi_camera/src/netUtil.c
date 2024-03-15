@@ -54,7 +54,7 @@ static struct net_mgmt_event_callback net_mgmt_cb;
 /* Define the boolean wifi_connected and the semaphore wifi_net_ready */
 static bool wifi_connected;
 static K_SEM_DEFINE(wifi_net_ready, 0, 1);
-K_SEM_DEFINE(sockets_ready, 0, 1);
+bool is_socket_ready=false;
 
 uint8_t udp_recv_buf[BUFFER_MAX_SIZE];
 K_MSGQ_DEFINE(udp_recv_queue, sizeof(udp_recv_buf), 1, 4);
@@ -313,7 +313,7 @@ static void wifi_net_sockets(void)
 		return;
 	}
 	LOG_INF("Sockets are ready!");
-	k_sem_give(&sockets_ready);
+	is_socket_ready = true;
 
 	while (1)
 	{

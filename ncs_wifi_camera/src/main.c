@@ -27,7 +27,7 @@ LOG_MODULE_REGISTER(WiFiCam, CONFIG_LOG_DEFAULT_LEVEL);
 extern int socket_send;
 extern uint8_t udp_recv_buf[];
 extern struct k_msgq udp_recv_queue;
-extern struct k_sem sockets_ready;
+extern bool is_socket_ready;
 
 #define RESET_CAMERA 0XFF
 #define SET_PICTURE_RESOLUTION 0X01
@@ -292,6 +292,7 @@ int report_mega_info(void)
 			mega_info.gain_value_max, mega_info.gain_value_min, mega_info.enable_sharpness);
 	printk("%s", str_buf);
 	str_len = strlen(str_buf);
+	while(is_socket_ready == false);
 	cam_to_host_command_send(0x02, str_buf, str_len);
 	return 0;
 }
