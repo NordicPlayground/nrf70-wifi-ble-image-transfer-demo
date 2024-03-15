@@ -217,12 +217,12 @@ class ArducamMegaCameraDataProcess:
             img.save("img.temp", "JPEG")
         except Exception as e:
             error_message = f"Error occurred while processing image: {str(e)}"
-        return f"RECV: Frame is captured!\nFrameSzie: {bytesframe}\nFPS: {fps:.2f}\nThroughPUT: {bytesframe*fps/1024:.2f}KB/SEC"
+        return f"FrameSize: {bytesframe} KB\nFrames-per-second: {fps:.2f}\nThroughput: {bytesframe*8*fps/1024:.2f} kbps\n"
 
     def process_info_command(self, payload_length, payload):
         # Process info command payload
         info_payload = payload.decode('utf-8')
-        return f"RECV: Connected to WiFi Camera!\n{info_payload}"
+        return f"Connected to WiFi Camera!\n{info_payload}"
 
     def process_version_command(self, payload):
         # Process version command payload
@@ -265,6 +265,10 @@ class UDPClient(QObject):
         self.log_content_text = QTextEdit()  # Placeholder for received content text edit widget
         self.command_buffer = b''  # Buffer to store the command packets
         self.in_command = False  # Flag to indicate if currently receiving a command
+
+    def close_sockets(self):
+        self.client_send_udp_socket.close()
+        self.client_recv_udp_socket.close()
 
     def send_command(self, command_str):
         try:
@@ -319,18 +323,18 @@ class UDPClient(QObject):
 class WifiCamHostGUI(QMainWindow):
     IMAGE_RESOLUTION_OPTIONS = {
         10: "96x96",
-        11: "128x128",
-        12: "320x320",
+        # 11: "128x128",
+        # 12: "320x320",
         # 0: "160x120",
-        1: "320x240",
+        # 1: "320x240",
         2: "640x480",
-        3: "800x600",
-        4: "1280x720",
-        5: "1280x960",
-        6: "1600x1200",
-        7: "1920x1080",
-        8: "2048x1536",
-        #9: "2592x1944"
+        # 3: "800x600",
+        # 4: "1280x720",
+        # 5: "1280x960",
+        # 6: "1600x1200",
+        # 7: "1920x1080",
+        8: "2048x1536@3MP",
+        9: "2592x1944@5MP"
     }
 
     IMAGE_FORMAT_OPTIONS = {
@@ -359,14 +363,12 @@ class WifiCamHostGUI(QMainWindow):
 
         # Define pre-filled commands
         pre_filled_commands = [self.commands.command_get_camera_info(),self.commands.command_take_picture()]
+        self.send_command(self.commands.command_stop_stream())
 
 
         # Initialize UDPClient with pre-filled commands
         # self.client.last_commands.extend(pre_filled_commands)
         self.create_layout(pre_filled_commands)
-
-        # Connect command receiving signal to process_received_packets slot
-        self.client.command_receiving_signal.connect(self.process_received_packets)
 
         # Start a thread to receive UDP packets
         receive_thread = Thread(target=self.client.receive_packets)
@@ -380,7 +382,7 @@ class WifiCamHostGUI(QMainWindow):
 
         # Left side: Display received image
         self.video_frame_widget = QWidget()
-        self.video_frame_widget.resize(800, 600)
+        self.video_frame_widget.setFixedSize(1600, 1200)
         self.video_frame_widget.setStyleSheet("background-color: gray;")
         self.video_frame_widget.setWindowTitle("Video Window")
 
@@ -397,7 +399,7 @@ class WifiCamHostGUI(QMainWindow):
 
         self.connect_window(right_side_layout)
         self.capture_window(right_side_layout)  # Added Capture Window
-        self.command_input_window(right_side_layout, pre_filled_commands)
+        # self.command_input_window(right_side_layout, pre_filled_commands)
         self.log_window(right_side_layout)
 
         right_side_widget.setLayout(right_side_layout)
@@ -424,67 +426,101 @@ class WifiCamHostGUI(QMainWindow):
         layout_add.addWidget(self.target_server_entry)
 
         self.connect_button = QPushButton("Connect")
-        self.connect_button.clicked.connect(self.connect_to_camera)
+        self.connect_button.clicked.connect(self.handle_connect_button)
         layout_add.addWidget(self.connect_button)
 
     def capture_window(self, layout):
         capture_tab = QWidget()
         capture_layout = QVBoxLayout()
 
-        video_size_layout = QHBoxLayout()  # Layout for video size
-        video_size_label = QLabel("Video Size:")
-        video_size_layout.addWidget(video_size_label)
-        self.video_size_combobox = QComboBox()
-        video_resolution_options = list(self.IMAGE_RESOLUTION_OPTIONS.items())[:5]
-        self.video_size_combobox.addItems([size for _, size in video_resolution_options])
-        video_size_layout.addWidget(self.video_size_combobox)
-        capture_layout.addLayout(video_size_layout)
+        image_resolution_layout = QHBoxLayout()  # Layout for image resolution
+        image_resolution_label = QLabel("Image Res:")
+        image_resolution_layout.addWidget(image_resolution_label)
+        self.image_resolution_combobox = QComboBox()
+        image_resolution_options = list(self.IMAGE_RESOLUTION_OPTIONS.items())
+        self.image_resolution_combobox.addItems([size for _, size in image_resolution_options])
+        self.image_resolution_combobox.setEnabled(False)
+        self.image_resolution_combobox.currentIndexChanged.connect(self.handle_resolution_change)
+        image_resolution_layout.addWidget(self.image_resolution_combobox)
+        capture_layout.addLayout(image_resolution_layout)
 
         # Add Capture Video Button
         self.stream_button = QPushButton("Start Stream")
-        self.stream_button.setEnabled(True)
-        self.stream_button.clicked.connect(self.toggle_stream)
+        self.stream_button.setEnabled(False)
+        self.stream_button.clicked.connect(self.toggle_stream_button)
         capture_layout.addWidget(self.stream_button)
 
-        # Image Format Layout
-        image_format_layout = QHBoxLayout()
-        image_format_label = QLabel("Image Format:")
-        image_format_layout.addWidget(image_format_label)
-        self.image_format_combobox = QComboBox()
-        image_format_options = list(self.IMAGE_FORMAT_OPTIONS.items())
-        self.image_format_combobox.addItems([size for _, size in image_format_options])
-        image_format_layout.addWidget(self.image_format_combobox)
-        capture_layout.addLayout(image_format_layout)
-
-        # Image Size Layout
-        image_size_layout = QHBoxLayout()
-        image_size_label = QLabel("Image Size:")
-        image_size_layout.addWidget(image_size_label)
-        self.image_size_combobox = QComboBox()
-        self.image_size_combobox.addItems([size for _, size in self.IMAGE_RESOLUTION_OPTIONS.items()])
-        image_size_layout.addWidget(self.image_size_combobox)
-        capture_layout.addLayout(image_size_layout)
+        # # Image Format Layout
+        # image_format_layout = QHBoxLayout()
+        # image_format_label = QLabel("Image Format:")
+        # image_format_layout.addWidget(image_format_label)
+        # self.image_format_combobox = QComboBox()
+        # image_format_options = list(self.IMAGE_FORMAT_OPTIONS.items())
+        # self.image_format_combobox.addItems([size for _, size in image_format_options])
+        # image_format_layout.addWidget(self.image_format_combobox)
+        # capture_layout.addLayout(image_format_layout)
 
         # Add Capture Image Button
         self.capture_image_button = QPushButton("Take Picture")
-        self.capture_image_button.setEnabled(True)
+        self.capture_image_button.setEnabled(False)
         self.capture_image_button.clicked.connect(self.capture_image)
         capture_layout.addWidget(self.capture_image_button)
 
         capture_tab.setLayout(capture_layout)
         layout.addWidget(capture_tab)
-    def toggle_stream(self):
+
+    def toggle_stream_button(self):
         if self.stream_button.text() == "Start Stream":
                 self.stream_button.setText("Stop Stream")
                 self.capture_image_button.setEnabled(False)
                 self.client.log_content_text.clear()
                 resolution_number = list(self.IMAGE_RESOLUTION_OPTIONS.keys())[
-                list(self.IMAGE_RESOLUTION_OPTIONS.values()).index(self.video_size_combobox.currentText())]
+                list(self.IMAGE_RESOLUTION_OPTIONS.values()).index(self.image_resolution_combobox.currentText())]
                 self.send_command(self.commands.command_start_streaming_mode(resolution_number))
         else:
                 self.stream_button.setText("Start Stream")
                 self.capture_image_button.setEnabled(True)
                 self.send_command(self.commands.command_stop_stream())
+
+    def handle_connect_button(self):
+        if self.connect_button.text() == "Connect":
+            self.stream_button.setText("Start Stream")
+            # Connect command receiving signal to process_received_packets slot
+            self.client.command_receiving_signal.connect(self.process_received_packets)
+            self.connect_to_camera()
+        else:
+            self.send_command(self.commands.command_stop_stream())
+            self.client.command_receiving_signal.disconnect()
+            self.capture_image_button.setEnabled(False)
+            self.stream_button.setEnabled(False)
+            self.image_resolution_combobox.setEnabled(False)
+            self.connect_button.setText("Connect")
+            self.client.log_content_text.clear()
+            self.video_frame_label.setText("Video/Image will show here!")
+    
+    def connect_to_camera(self):
+        address = self.target_server_entry.text()
+        if ':' not in address:
+            QMessageBox.critical(None, "Error", "Invalid address format. Use IP:Port.")
+            return
+        ip, port = address.split(':')
+        try:
+            port = int(port)
+        except ValueError:
+            QMessageBox.critical(None, "Error", "Invalid port number.")
+            return
+        self.send_command(self.commands.command_get_camera_info())
+
+    def handle_resolution_change(self, index):
+        if self.stream_button.text() == "Stop Stream":
+            # Stop the current stream
+            self.send_command(self.commands.command_stop_stream())
+            time.sleep(0.5)  # Adjust the delay as needed
+
+            # Start the stream with the new resolution
+            resolution_number = list(self.IMAGE_RESOLUTION_OPTIONS.keys())[
+            list(self.IMAGE_RESOLUTION_OPTIONS.values()).index(self.image_resolution_combobox.currentText())]
+            self.send_command(self.commands.command_start_streaming_mode(resolution_number))
 
     def command_input_window(self, layout, pre_filled_commands):
         label = QLabel("Commands:")
@@ -537,11 +573,15 @@ class WifiCamHostGUI(QMainWindow):
             self.client.log_content_text.append(result)
         
         # Display the received video frame
-        if result.startswith("RECV: Connected to WiFi Camera!"):
+        if result.startswith("Connected to WiFi Camera!"):
             self.capture_image_button.setEnabled(True)
+            self.stream_button.setEnabled(True)
+            self.image_resolution_combobox.setEnabled(True)
+            self.connect_button.setText("Disconnect")
+
             
         # Display the received video frame
-        if result.startswith("RECV: Frame is captured!"):
+        if result.startswith("FrameSize"):
             img_path = "img.temp"
             pixmap = QPixmap(img_path)
             self.video_frame_label.setPixmap(pixmap)
@@ -565,22 +605,10 @@ class WifiCamHostGUI(QMainWindow):
         with open('config.ini', 'w') as f: 
             self.config.write(f)
 
-    def connect_to_camera(self):
-        address = self.target_server_entry.text()
-        if ':' not in address:
-            QMessageBox.critical(None, "Error", "Invalid address format. Use IP:Port.")
-            return
-        ip, port = address.split(':')
-        try:
-            port = int(port)
-        except ValueError:
-            QMessageBox.critical(None, "Error", "Invalid port number.")
-            return
-        self.send_command(self.commands.command_get_camera_info())
-
     def capture_image(self):
-        resolution_number = list(self.IMAGE_RESOLUTION_OPTIONS.keys())[list(self.IMAGE_RESOLUTION_OPTIONS.values()).index(self.image_size_combobox.currentText())]
-        format_number = list(self.IMAGE_FORMAT_OPTIONS.keys())[list(self.IMAGE_FORMAT_OPTIONS.values()).index(self.image_format_combobox.currentText())]
+        resolution_number = list(self.IMAGE_RESOLUTION_OPTIONS.keys())[list(self.IMAGE_RESOLUTION_OPTIONS.values()).index(self.image_resolution_combobox.currentText())]
+        #format_number = list(self.IMAGE_FORMAT_OPTIONS.keys())[list(self.IMAGE_FORMAT_OPTIONS.values()).index(self.image_format_combobox.currentText())]
+        format_number = 1
         self.send_command(self.commands.command_set_picture_resolution(format_number,resolution_number))
         self.send_command(self.commands.command_take_picture())
 
