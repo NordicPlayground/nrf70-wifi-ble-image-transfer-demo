@@ -292,7 +292,9 @@ int report_mega_info(void)
 			mega_info.gain_value_max, mega_info.gain_value_min, mega_info.enable_sharpness);
 	printk("%s", str_buf);
 	str_len = strlen(str_buf);
-	while(is_socket_ready == false);
+	while(is_socket_ready == false) {
+		k_msleep(10);
+	}
 	cam_to_host_command_send(0x02, str_buf, str_len);
 	return 0;
 }
