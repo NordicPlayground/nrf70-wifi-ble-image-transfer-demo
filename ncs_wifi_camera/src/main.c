@@ -432,6 +432,9 @@ void app_bt_connected_callback(void)
 	set_mega_resolution(0x11);
 
 	app_mode_current = APP_MODE_BLE;
+
+	//inform WiFi host device swith to APP_MODE_BLE with 0xFF as type
+	cam_to_host_command_send(0xFF, NULL, 0);
 }
 
 void app_bt_disconnected_callback(void)
@@ -443,8 +446,11 @@ void app_bt_disconnected_callback(void)
 		video_stream_stop(video);
 		preview_on = false;
 	}
-
+	
 	app_mode_current = APP_MODE_UDP;
+
+	//inform WiFi host device swith to APP_MODE_UDP with 0xAA as type
+	cam_to_host_command_send(0xFF, NULL, 0);
 }
 
 void app_bt_take_picture_callback(void)

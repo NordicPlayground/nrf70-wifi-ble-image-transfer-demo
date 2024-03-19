@@ -190,6 +190,12 @@ class ArducamMegaCameraDataProcess:
             elif command_type == b'\x06':
                 # Streamoff command
                 return self.process_streamoff_command(payload)
+            elif command_type == b'\xFF':
+                # Camera change to APP_MODE_BLE
+                return self.process_ble_mode_command(payload)
+            elif command_type == b'\xAA':
+                # Camera change to APP_MODE_UDP
+                return self.process_udp_mode_command(payload)
             else:
                 return "Unknown command type"
         elif start_marker == b'\xFF\xBB':
@@ -218,11 +224,6 @@ class ArducamMegaCameraDataProcess:
         except Exception as e:
             error_message = f"Error occurred while processing image: {str(e)}"
         return f"FrameSize: {bytesframe} KB\nFrames-per-second: {fps:.2f}\nThroughput: {bytesframe*8*fps/1024:.2f} kbps\n"
-
-    # def process_info_command(self, payload_length, payload):
-    #     # Process info command payload
-    #     info_payload = payload.decode('utf-8')
-    #     return f"Connected to WiFi Camera!\n{info_payload}"
         
     def process_info_command(self, payload_length, payload):
         # Process info command payload
@@ -272,6 +273,13 @@ class ArducamMegaCameraDataProcess:
     def process_stop_command(self, command_type, payload_length, payload):
         # Process stop command
         return f"Stop command received. Command type: {command_type}, Payload length: {payload_length}, Payload: {payload}"
+    
+    def process_ble_mode_command(self, payload):
+        return "Camera switch to BLE mode"
+
+    def process_udp_mode_command(self, payload):
+        return "Camera switch to UDP mode"
+        
 
 
 class UDPClient(QObject):
@@ -606,12 +614,27 @@ class WifiCamHostGUI(QMainWindow):
             self.image_resolution_combobox.setEnabled(True)
             self.connect_button.setText("Disconnect")
 
-            
         # Display the received video frame
         if result.startswith("FrameSize"):
             img_path = "img.temp"
             pixmap = QPixmap(img_path)
             self.video_frame_label.setPixmap(pixmap)
+        
+        if result.startswith("Camera switch to BLE mode"):
+            self.send_command(self.commands.command_stop_stream())
+            self.client.command_receiving_signal.disconnect()
+            self.capture_image_button.setEnabled(False)
+            self.stream_button.setEnabled(False)
+            self.image_resolution_combobox.setEnabled(False)
+            self.connect_button.setText("Connect")
+            self.client.log_content_text.clear()
+            self.video_frame_label.setText("Video/Image will show here!")
+            self.client.log_content_text.append(f"Camera switch to BLE mode!\nPlease check Android App.")    
+
+        if result.startswith("Camera switch to UDP mode"):
+            self.client.log_content_text.append(f"Camera switch back to UDP mode!\n Please try with connect button again.")   
+
+
     # Update method
     def update_target_server(self, text):
          # Update target server 
