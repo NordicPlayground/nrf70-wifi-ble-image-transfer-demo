@@ -511,8 +511,10 @@ class WifiCamHostGUI(QMainWindow):
         if self.connect_button.text() == "Connect":
             self.stream_button.setText("Start Stream")
             # Connect command receiving signal to process_received_packets slot
-            self.client.command_receiving_signal.connect(self.process_received_packets)
+            self.client.log_content_text.append(f"Connecting to WiFi Camera...")
             self.connect_to_camera()
+            self.client.command_receiving_signal.connect(self.process_received_packets)
+            
         else:
             self.send_command(self.commands.command_stop_stream())
             self.client.command_receiving_signal.disconnect()

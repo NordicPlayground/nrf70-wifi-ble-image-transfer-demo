@@ -27,7 +27,6 @@ LOG_MODULE_REGISTER(WiFiCam, CONFIG_LOG_DEFAULT_LEVEL);
 extern int socket_send;
 extern uint8_t udp_recv_buf[];
 extern struct k_msgq udp_recv_queue;
-extern bool is_socket_ready;
 
 #define RESET_CAMERA 0XFF
 #define SET_PICTURE_RESOLUTION 0X01
@@ -292,9 +291,6 @@ int report_mega_info(void)
 			mega_info.gain_value_max, mega_info.gain_value_min, mega_info.enable_sharpness);
 	printk("%s", str_buf);
 	str_len = strlen(str_buf);
-	while(is_socket_ready == false) {
-		k_msleep(10);
-	}
 	cam_to_host_command_send(0x02, str_buf, str_len);
 	return 0;
 }
@@ -319,7 +315,7 @@ uint8_t recv_process(uint8_t *buff)
 			LOG_INF("SET_VIDEO_RESOLUTION preview_on");
 			set_mega_resolution(buff[1] | 0x10);
 			video_stream_start(video);
-			LOG_INF("start video stream");
+			LOG_INF("Start video stream");
 			capture_flag = true;
 		}
 		preview_on = true;
@@ -376,7 +372,7 @@ uint8_t recv_process(uint8_t *buff)
 			send(socket_send, &head_and_tail[3], 2, 0);
 			video_stream_stop(video);
 			set_mega_resolution(take_picture_fmt);
-			LOG_INF("start video stream");
+			LOG_INF("Stop video stream");
 		}
 		preview_on = false;
 		break;
@@ -537,8 +533,6 @@ int main(void)
 		}
 		video_enqueue(video, VIDEO_EP_OUT, buffers[i]);
 	}
-
-	//k_sem_take(&sockets_ready, K_FOREVER);
 
 	k_timer_start(&m_timer_count_bytes, K_MSEC(1000), K_MSEC(1000));
 
