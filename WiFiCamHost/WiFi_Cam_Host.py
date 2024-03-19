@@ -162,6 +162,7 @@ class CommandsToCamera:
         # Ensure focus control code is within the valid range
 
 class ArducamMegaCameraDataProcess:
+    is_res_updated = False
     def __init__(self):
         self.last_frame_time = None
 
@@ -228,13 +229,15 @@ class ArducamMegaCameraDataProcess:
     def process_info_command(self, payload_length, payload):
         # Process info command payload
         info_payload = payload.decode('utf-8')
-        # Update IMAGE_RESOLUTION_OPTIONS based on camera type
-        if "Camera Type:3MP" in info_payload:
-            # Delete max resulation for Camera Type:5MP
-            self.update_resolution_options(remove_option="2592x1944")
-        elif "Camera Type:5MP" in info_payload:
-            # Delete max resulation for Camera Type:3MP
-            self.update_resolution_options(remove_option="2048x1536")
+        if self.is_res_updated==False:
+            # Update IMAGE_RESOLUTION_OPTIONS based on camera type
+            if "Camera Type:3MP" in info_payload:
+                # Delete max resulation for Camera Type:5MP
+                self.update_resolution_options(remove_option="2592x1944")
+            elif "Camera Type:5MP" in info_payload:
+                # Delete max resulation for Camera Type:3MP
+                self.update_resolution_options(remove_option="2048x1536")
+        print(f"Connected to WiFi Camera!")     
         return f"Connected to WiFi Camera!\n{info_payload}"
     
     def update_resolution_options(self, remove_option):
@@ -249,6 +252,8 @@ class ArducamMegaCameraDataProcess:
         # Update the image_resolution_combobox
         main_window.image_resolution_combobox.clear()
         main_window.image_resolution_combobox.addItems(list(main_window.IMAGE_RESOLUTION_OPTIONS.values()))
+        self.is_res_updated==True
+
 
     def process_version_command(self, payload):
         # Process version command payload
@@ -521,8 +526,7 @@ class WifiCamHostGUI(QMainWindow):
             # Connect command receiving signal to process_received_packets slot
             self.client.log_content_text.append(f"Connecting to WiFi Camera...")
             self.connect_to_camera()
-            self.client.command_receiving_signal.connect(self.process_received_packets)
-            
+            self.client.command_receiving_signal.connect(self.process_received_packets)    
         else:
             self.send_command(self.commands.command_stop_stream())
             self.client.command_receiving_signal.disconnect()
