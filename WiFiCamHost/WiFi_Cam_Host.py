@@ -219,10 +219,35 @@ class ArducamMegaCameraDataProcess:
             error_message = f"Error occurred while processing image: {str(e)}"
         return f"FrameSize: {bytesframe} KB\nFrames-per-second: {fps:.2f}\nThroughput: {bytesframe*8*fps/1024:.2f} kbps\n"
 
+    # def process_info_command(self, payload_length, payload):
+    #     # Process info command payload
+    #     info_payload = payload.decode('utf-8')
+    #     return f"Connected to WiFi Camera!\n{info_payload}"
+        
     def process_info_command(self, payload_length, payload):
         # Process info command payload
         info_payload = payload.decode('utf-8')
+        # Update IMAGE_RESOLUTION_OPTIONS based on camera type
+        if "Camera Type:3MP" in info_payload:
+            # Delete max resulation for Camera Type:5MP
+            self.update_resolution_options(remove_option="2592x1944")
+        elif "Camera Type:5MP" in info_payload:
+            # Delete max resulation for Camera Type:3MP
+            self.update_resolution_options(remove_option="2048x1536")
         return f"Connected to WiFi Camera!\n{info_payload}"
+    
+    def update_resolution_options(self, remove_option):
+       # Get the main window instance
+        main_window = QApplication.instance().topLevelWidgets()[0]
+
+        for key, value in list(main_window.IMAGE_RESOLUTION_OPTIONS.items()):
+            if value == remove_option:
+                del main_window.IMAGE_RESOLUTION_OPTIONS[key]
+                break
+
+        # Update the image_resolution_combobox
+        main_window.image_resolution_combobox.clear()
+        main_window.image_resolution_combobox.addItems(list(main_window.IMAGE_RESOLUTION_OPTIONS.values()))
 
     def process_version_command(self, payload):
         # Process version command payload
@@ -326,15 +351,15 @@ class WifiCamHostGUI(QMainWindow):
         # 11: "128x128",
         # 12: "320x320",
         # 0: "160x120",
-        # 1: "320x240",
+        1: "320x240",
         2: "640x480",
         # 3: "800x600",
-        # 4: "1280x720",
+        4: "1280x720",
         # 5: "1280x960",
         # 6: "1600x1200",
         # 7: "1920x1080",
-        8: "2048x1536@3MP",
-        9: "2592x1944@5MP"
+        8: "2048x1536",
+        9: "2592x1944"
     }
 
     IMAGE_FORMAT_OPTIONS = {
