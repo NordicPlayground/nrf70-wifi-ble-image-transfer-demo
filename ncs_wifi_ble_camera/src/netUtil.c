@@ -3,6 +3,7 @@
  *
  * SPDX-License-Identifier: LicenseRef-Nordic-5-Clause
  */
+#include "net_util.h"
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(NetUtil, CONFIG_LOG_DEFAULT_LEVEL);
 
@@ -57,6 +58,19 @@ static K_SEM_DEFINE(wifi_net_ready, 0, 1)
 
 uint8_t udp_recv_buf[BUFFER_MAX_SIZE];
 K_MSGQ_DEFINE(udp_recv_queue, sizeof(udp_recv_buf), 1, 4);
+
+static net_util_udp_rx_callback_t udp_rx_cb = 0; 
+
+void net_util_set_callback(net_util_udp_rx_callback_t udp_rx_callback)
+{
+	udp_rx_cb = udp_rx_callback;
+
+	// If any messages are waiting in the queue, forward them immediately
+	uint8_t buf[6];
+	while (k_msgq_get(&udp_recv_queue, buf, K_NO_WAIT) == 0) {
+		udp_rx_cb(buf, 6);
+	}
+}
 
 /*
 ** Two sockets are use by UDP Server(WiFiCam+nRF7002DK)
@@ -235,6 +249,15 @@ static int wifi_network_ready(void)
 	return 0;
 }
 
+static void trigger_rx_udp_callback_if_set(uint8_t *msg)
+{
+	if (udp_rx_cb != 0) {
+		udp_rx_cb(udp_recv_buf, 6);
+	} else {
+		k_msgq_put(&udp_recv_queue, &udp_recv_buf, K_NO_WAIT);
+	}
+}
+
 /* Thread to setup WiFi, Network, Sockets step by step */
 static void wifi_net_sockets(void)
 {
@@ -279,7 +302,8 @@ static void wifi_net_sockets(void)
 		FATAL_ERROR();
 		return;
 	}
-	k_msgq_put(&udp_recv_queue, &udp_recv_buf, K_NO_WAIT);
+
+	trigger_rx_udp_callback_if_set(udp_recv_buf);
 
 	inet_ntop(client_addr.sin_family, &client_addr.sin_addr, addr_str, sizeof(addr_str));
 	LOG_INF("UDP Client(WiFiCamHost) IPAddr = %s, Port = %d\n", addr_str, ntohs(client_addr.sin_port));
@@ -322,7 +346,9 @@ static void wifi_net_sockets(void)
 					-errno);
 			return;
 		}
-		k_msgq_put(&udp_recv_queue, &udp_recv_buf, K_NO_WAIT);
+
+		trigger_rx_udp_callback_if_set(udp_recv_buf);
+
 		k_yield();
 	}
 }
