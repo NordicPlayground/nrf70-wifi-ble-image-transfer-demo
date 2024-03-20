@@ -219,7 +219,7 @@ void video_preview(enum APP_MODE mode)
 		return;
 	}
 	f_status = vbuf->flags;
-	LOG_INF("f_status %i, bytesframe %i, bytesused %i. cf %i, rs %i", f_status, vbuf->bytesframe, vbuf->bytesused, capture_flag, request_stream_stop);
+	//LOG_INF("f_status %i, bytesframe %i, bytesused %i. cf %i, rs %i", f_status, vbuf->bytesframe, vbuf->bytesused, capture_flag, request_stream_stop);
 	if (capture_flag)
 	{
 		capture_flag = false;
@@ -325,7 +325,6 @@ uint8_t recv_process(uint8_t *buff)
 	{
 	case SET_PICTURE_RESOLUTION:
 		LOG_INF("camcmd: SET_PICTURE_RESOLUTION");
-
 		if (set_mega_resolution(buff[1]) == 0)
 		{
 			take_picture_fmt = buff[1];
@@ -335,10 +334,8 @@ uint8_t recv_process(uint8_t *buff)
 		LOG_INF("camcmd: SET_VIDEO_RESOLUTION");
 		if (!preview_on_udp)
 		{
-			LOG_INF("SET_VIDEO_RESOLUTION preview_on");
 			set_mega_resolution(buff[1] | 0x10);
 			video_stream_start(video);
-			LOG_INF("Start video stream");
 			capture_flag = true;
 		}
 		preview_on_udp = true;
@@ -384,10 +381,10 @@ uint8_t recv_process(uint8_t *buff)
 		report_mega_info();
 		break;
 	case TAKE_PICTURE:
+		LOG_INF("Take picture");
 		video_stream_start(video);
 		take_picture(APP_MODE_UDP);
 		video_stream_stop(video);
-		LOG_INF("take picture");
 		break;
 	case STOP_STREAM:
 		if (preview_on_udp)
@@ -464,7 +461,7 @@ void app_bt_connected_callback(void)
 	app_mode_current = APP_MODE_BLE;
 
 	//inform WiFi host device swith to APP_MODE_BLE with 0xFF as type
-	cam_to_host_command_send(0xFF, NULL, 0);
+	//cam_to_host_command_send(0xFF, NULL, 0);
 }
 
 void app_bt_disconnected_callback(void)
@@ -480,7 +477,7 @@ void app_bt_disconnected_callback(void)
 	app_mode_current = APP_MODE_UDP;
 
 	//inform WiFi host device swith to APP_MODE_UDP with 0xAA as type
-	cam_to_host_command_send(0xFF, NULL, 0);
+	//cam_to_host_command_send(0xAA, NULL, 0);
 }
 
 void app_bt_take_picture_callback(void)
@@ -576,8 +573,7 @@ int main(void)
 
 	k_timer_start(&m_timer_count_bytes, K_MSEC(1000), K_MSEC(1000));
 	//video_stream_start(video);
-	while (1)
-	{
+	while (1) {
 		struct app_command_t new_command;
 		if (k_msgq_get(&msgq_app_commands, &new_command, K_USEC(50)) == 0) {
 			switch (new_command.type) {
@@ -612,17 +608,25 @@ int main(void)
 					}
 					break;
 				case APPCMD_UDP_RX:
-					recv_process(new_command.data);
+					uint8_t udp_cmd_buf[4];
+					ret = process_udp_rx_buffer(new_command.data, udp_cmd_buf);
+					if (ret > 0)
+					{
+						LOG_INF("Valid command received. Length:%d", ret);
+						LOG_HEXDUMP_INF(udp_cmd_buf, ret, "Data: ");
+						recv_process(udp_cmd_buf);
+					}
+					else
+					{
+						LOG_INF("Invalid UDP command received");
+					}
 					break;
 			}
 		}
-		if (preview_on_ble == 1)
-		{
-			video_preview(APP_MODE_BLE);
-		}
-		if (preview_on_udp == 1)
-		{
+		if (preview_on_udp == 1) {
 			video_preview(APP_MODE_UDP);
+		} else if (preview_on_ble == 1) {
+			video_preview(APP_MODE_BLE);
 		}
 
 	#if 0
