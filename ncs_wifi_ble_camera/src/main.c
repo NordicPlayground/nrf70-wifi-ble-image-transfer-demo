@@ -80,10 +80,15 @@ struct app_command_t {
 
 K_MSGQ_DEFINE(msgq_app_commands, sizeof(struct app_command_t), 8, 4);
 
-static bool preview_on_ble = false;
-static bool preview_on_udp = false;
+struct client_state {
+	uint8_t req_stream : 1;
+	uint8_t req_stream_stop : 1;
+	uint8_t stream_active : 1;
+};
+struct client_state client_state_ble = {0};
+struct client_state client_state_udp = {0};
+
 static bool capture_flag = false;
-static int request_stream_stop = 0;
 
 static void on_timer_count_bytes_func(struct k_timer *timer);
 K_TIMER_DEFINE(m_timer_count_bytes, on_timer_count_bytes_func, NULL);
@@ -161,6 +166,43 @@ void send_picture_data_ble(uint8_t *data, int length)
 	app_bt_send_picture_data(data, length);
 }
 
+static void client_request_single_capture(struct client_state *state)
+{
+	if (!state->stream_active) {
+		state->req_stream = 1;
+		state->req_stream_stop = 1;
+	}
+}
+
+static void client_request_stream_start_stop(struct client_state *state, bool start)
+{
+	if (start) {
+		state->req_stream = 1;
+	} else {
+		state->req_stream_stop = 1;
+	}
+}
+
+static int client_check_start_request(struct client_state *state)
+{
+	if (state->req_stream && !state->stream_active) {
+		state->req_stream = 0;
+		state->stream_active = 1;
+		return 1;
+	}
+	return 0;
+}
+
+static int client_check_stop_request(struct client_state *state)
+{
+	if (state->req_stream_stop && state->stream_active) {
+		state->req_stream_stop = 0;
+		state->stream_active = 0;
+		return 1;
+	}
+	return 0;
+}
+
 int take_picture(enum APP_MODE mode)
 {
 	int err;
@@ -207,7 +249,7 @@ int take_picture(enum APP_MODE mode)
 	return 0;
 }
 
-void video_preview(enum APP_MODE mode)
+void video_preview(void)
 {
 	int err;
 	enum video_frame_fragmented_status f_status;
@@ -219,7 +261,7 @@ void video_preview(enum APP_MODE mode)
 		return;
 	}
 	f_status = vbuf->flags;
-	//LOG_INF("f_status %i, bytesframe %i, bytesused %i. cf %i, rs %i", f_status, vbuf->bytesframe, vbuf->bytesused, capture_flag, request_stream_stop);
+	//LOG_INF("CF1: f_status %i, bytesframe %i, bytesused %i. cf %i", f_status, vbuf->bytesframe, vbuf->bytesused, capture_flag);
 	if (capture_flag)
 	{
 		capture_flag = false;
@@ -235,9 +277,14 @@ void video_preview(enum APP_MODE mode)
 			return;
 		}
 
-		if (mode == APP_MODE_BLE) {
+		client_check_start_request(&client_state_ble);
+
+		client_check_start_request(&client_state_udp);
+
+		if (client_state_ble.stream_active) {
 			app_bt_send_picture_header(vbuf->bytesframe);
-		} else {
+		} 
+		if (client_state_udp.stream_active) {
 			head_and_tail[2] = 0x01;
 			send(socket_send, &head_and_tail[0], 3, 0);
 			send(socket_send, (uint8_t *)&vbuf->bytesframe, 4, 0);
@@ -246,27 +293,24 @@ void video_preview(enum APP_MODE mode)
 		}
 	}
 
-	if (mode == APP_MODE_BLE) {
+	if (client_state_ble.stream_active) {
 		send_picture_data_ble(vbuf->buffer, vbuf->bytesused);
-	} else {
+	} 
+	if (client_state_udp.stream_active) {
 		send_picture_data_udp(vbuf->buffer, vbuf->bytesused);
 	}
 
 	if (f_status == VIDEO_BUF_EOF)
 	{
-		if (mode == APP_MODE_UDP) {
-			send(socket_send, &head_and_tail[3], 2, 0);
-		}
 		capture_flag = true;
 
-		if(request_stream_stop > 0) {
-			request_stream_stop--;
-			if (request_stream_stop == 0) {
-				//video_stream_stop(video);
-				preview_on_ble = false;
-				preview_on_udp = false;
-			}
+		if (client_state_udp.stream_active) {
+			send(socket_send, &head_and_tail[3], 2, 0);
 		}
+
+		client_check_stop_request(&client_state_ble);
+
+		client_check_stop_request(&client_state_udp);	
 	}
 
 	err = video_enqueue(video, VIDEO_EP_OUT, vbuf);
@@ -332,13 +376,12 @@ uint8_t recv_process(uint8_t *buff)
 		break;
 	case SET_VIDEO_RESOLUTION:
 		LOG_INF("camcmd: SET_VIDEO_RESOLUTION");
-		if (!preview_on_udp)
+		if (!client_state_udp.stream_active)
 		{
 			set_mega_resolution(buff[1] | 0x10);
 			//video_stream_start(video);
-			capture_flag = true;
+			client_request_stream_start_stop(&client_state_udp, true);
 		}
-		preview_on_udp = true;
 		break;
 	case SET_BRIGHTNESS:
 		video_set_ctrl(video, VIDEO_CID_CAMERA_BRIGHTNESS, &buff[1]);
@@ -382,19 +425,14 @@ uint8_t recv_process(uint8_t *buff)
 		break;
 	case TAKE_PICTURE:
 		LOG_INF("Take picture");
-		//video_stream_start(video);
-		take_picture(APP_MODE_UDP);
-		//video_stream_stop(video);
+		client_request_single_capture(&client_state_udp);
 		break;
 	case STOP_STREAM:
-		if (preview_on_udp)
+		if (client_state_udp.stream_active)
 		{
-			send(socket_send, &head_and_tail[3], 2, 0);
-			//video_stream_stop(video);
-			set_mega_resolution(take_picture_fmt);
 			LOG_INF("Stop video stream");
+			client_request_stream_start_stop(&client_state_udp, false);
 		}
-		preview_on_udp = false;
 		break;
 	case RESET_CAMERA:
 		video_set_ctrl(video, VIDEO_CID_ARDUCAM_RESET, NULL);
@@ -462,11 +500,9 @@ void app_bt_disconnected_callback(void)
 {
 	LOG_INF("Bluetooth disconnected. Entering UDP app mode");
 	
-	// If we are in streaming mode, stop the streaming
-	if (preview_on_ble) {
-		//video_stream_stop(video);
-		preview_on_ble = false;
-	}
+	client_state_ble.req_stream = 0;
+	client_state_ble.req_stream_stop = 0;
+	client_state_ble.stream_active = 0;
 	
 	app_mode_current = APP_MODE_UDP;
 
@@ -567,6 +603,8 @@ int main(void)
 
 	k_timer_start(&m_timer_count_bytes, K_MSEC(1000), K_MSEC(1000));
 	
+	set_mega_resolution(0x11);
+
 	video_stream_start(video);
 	
 	while (1) {
@@ -575,10 +613,7 @@ int main(void)
 			switch (new_command.type) {
 				case APPCMD_TAKE_PICTURE:
 					LOG_INF("TAKE PICTURE");
-					//video_stream_start(video);
-					capture_flag = true;
-					preview_on_ble = true;
-					request_stream_stop = 1;
+					client_request_single_capture(&client_state_ble);
 					break;
 				case APPCMD_CAM_COMMAND:
 					switch (new_command.cam_cmd) {
@@ -590,17 +625,13 @@ int main(void)
 					break;
 				case APPCMD_START_STOP_STREAM:
 					bool enable = new_command.data[0] > 0; 
-						// If we are already in the same state, exit
-					if(enable == preview_on_ble) break;
 					
 					if (enable) {
 						LOG_INF("Starting stream!");
-						//video_stream_start(video);
-						capture_flag = true;
-						preview_on_ble = true;
+						client_state_ble.req_stream = 1;
 					} else {
 						LOG_INF("Stopping stream");
-						request_stream_stop = 1;
+						client_state_ble.req_stream_stop = 1;
 					}
 					break;
 				case APPCMD_UDP_RX:
@@ -619,43 +650,8 @@ int main(void)
 					break;
 			}
 		}
-		if (preview_on_udp == 1) {
-			video_preview(APP_MODE_UDP);
-		} else if (preview_on_ble == 1) {
-			video_preview(APP_MODE_BLE);
-		}
 
-	#if 0
-		if (app_mode_current == APP_MODE_UDP) {
-			ret = k_msgq_get(&udp_recv_queue, &udp_recv_buf, K_USEC(10));
-			if (ret == 0)
-			{
-				ret = process_udp_rx_buffer(udp_recv_buf, command_buf);
-				if (ret > 0)
-				{
-					LOG_INF("Valid command received. Length:%d", ret);
-					LOG_HEXDUMP_INF(command_buf, ret, "Data: ");
-					recv_process(command_buf);
-				}
-				else
-				{
-					LOG_INF("No valid command reviced");
-				}
-			}
-			if (preview_on == 1)
-			{
-				video_preview(APP_MODE_UDP);
-			}			
-			k_yield();
-		} else if (app_mode_current == APP_MODE_BLE) {
-			if (preview_on == 1)
-			{
-				video_preview(APP_MODE_BLE);
-			} else {
-				k_msleep(100);
-			}
-		}
-#endif
+		video_preview();
 	}
 	return 0;
 }
