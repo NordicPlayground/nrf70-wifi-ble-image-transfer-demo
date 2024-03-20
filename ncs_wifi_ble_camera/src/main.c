@@ -219,7 +219,7 @@ void video_preview(enum APP_MODE mode)
 		return;
 	}
 	f_status = vbuf->flags;
-	LOG_INF("f_status %i", f_status);
+	LOG_INF("f_status %i, bytesframe %i, bytesused %i. cf %i, rs %i", f_status, vbuf->bytesframe, vbuf->bytesused, capture_flag, request_stream_stop);
 	if (capture_flag)
 	{
 		capture_flag = false;
