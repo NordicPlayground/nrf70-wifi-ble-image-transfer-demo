@@ -262,7 +262,7 @@ void video_preview(enum APP_MODE mode)
 		if(request_stream_stop > 0) {
 			request_stream_stop--;
 			if (request_stream_stop == 0) {
-				video_stream_stop(video);
+				//video_stream_stop(video);
 				preview_on_ble = false;
 				preview_on_udp = false;
 			}
@@ -335,7 +335,7 @@ uint8_t recv_process(uint8_t *buff)
 		if (!preview_on_udp)
 		{
 			set_mega_resolution(buff[1] | 0x10);
-			video_stream_start(video);
+			//video_stream_start(video);
 			capture_flag = true;
 		}
 		preview_on_udp = true;
@@ -382,15 +382,15 @@ uint8_t recv_process(uint8_t *buff)
 		break;
 	case TAKE_PICTURE:
 		LOG_INF("Take picture");
-		video_stream_start(video);
+		//video_stream_start(video);
 		take_picture(APP_MODE_UDP);
-		video_stream_stop(video);
+		//video_stream_stop(video);
 		break;
 	case STOP_STREAM:
 		if (preview_on_udp)
 		{
 			send(socket_send, &head_and_tail[3], 2, 0);
-			video_stream_stop(video);
+			//video_stream_stop(video);
 			set_mega_resolution(take_picture_fmt);
 			LOG_INF("Stop video stream");
 		}
@@ -449,14 +449,8 @@ void app_bt_connected_callback(void)
 {	
 	LOG_INF("Bluetooth connection established. Entering BLE app mode");
 
-	// If we are in streaming mode, stop the streaming
-	if (preview_on_ble) {
-		video_stream_stop(video);
-		preview_on_ble = false;
-	}
-
 	// Set the default resolution for the BT app
-	set_mega_resolution(0x11);
+	//set_mega_resolution(0x11);
 
 	app_mode_current = APP_MODE_BLE;
 
@@ -470,7 +464,7 @@ void app_bt_disconnected_callback(void)
 	
 	// If we are in streaming mode, stop the streaming
 	if (preview_on_ble) {
-		video_stream_stop(video);
+		//video_stream_stop(video);
 		preview_on_ble = false;
 	}
 	
@@ -572,14 +566,16 @@ int main(void)
 	}
 
 	k_timer_start(&m_timer_count_bytes, K_MSEC(1000), K_MSEC(1000));
-	//video_stream_start(video);
+	
+	video_stream_start(video);
+	
 	while (1) {
 		struct app_command_t new_command;
 		if (k_msgq_get(&msgq_app_commands, &new_command, K_USEC(50)) == 0) {
 			switch (new_command.type) {
 				case APPCMD_TAKE_PICTURE:
 					LOG_INF("TAKE PICTURE");
-					video_stream_start(video);
+					//video_stream_start(video);
 					capture_flag = true;
 					preview_on_ble = true;
 					request_stream_stop = 1;
@@ -599,7 +595,7 @@ int main(void)
 					
 					if (enable) {
 						LOG_INF("Starting stream!");
-						video_stream_start(video);
+						//video_stream_start(video);
 						capture_flag = true;
 						preview_on_ble = true;
 					} else {
