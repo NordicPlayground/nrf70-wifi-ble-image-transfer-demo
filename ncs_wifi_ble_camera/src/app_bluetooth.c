@@ -20,6 +20,7 @@ static const struct bt_le_conn_param *conn_param = BT_LE_CONN_PARAM(9, 9, 0, 400
 static struct bt_conn *current_conn;
 
 static app_bt_connected_cb app_callback_connected;
+static app_bt_ready_cb app_callback_ready;
 static app_bt_disconnected_cb app_callback_disconnected;
 static app_bt_take_picture_cb app_callback_take_picture;
 static app_bt_enable_stream_cb app_callback_enable_stream;
@@ -29,7 +30,7 @@ static struct its_ble_params_info_t ble_params_info = {.con_interval = 0, .mtu =
 // In order to maximize data throughput, scale the notifications after the TX data length
 static int le_tx_data_length = 20;
 
-enum app_bt_internal_commands {APP_BT_INT_ITS_RX_EVT, APP_BT_INT_SCHEDULE_CONNECTED_CB, APP_BT_INT_SCHEDULE_DISCONNECTED_CB, APP_BT_INT_SCHEDULE_BLE_PARAMS_INFO_UPDATE};
+enum app_bt_internal_commands {APP_BT_INT_ITS_RX_EVT, APP_BT_INT_SCHEDULE_CONNECTED_CB, APP_BT_INT_SCHEDULE_READY_CB, APP_BT_INT_SCHEDULE_DISCONNECTED_CB, APP_BT_INT_SCHEDULE_BLE_PARAMS_INFO_UPDATE};
 static struct its_rx_cb_evt_t internal_command_evt;
 
 void schedule_ble_params_info_update(void);
@@ -178,6 +179,14 @@ void schedule_ble_params_info_update(void)
 	}
 }
 
+void its_ready_callback(void)
+{
+	static struct app_bt_command bt_cmd = {.command = APP_BT_INT_SCHEDULE_READY_CB};
+	if (k_msgq_put(&msgq_its_rx_commands, &bt_cmd, K_NO_WAIT) != 0) {
+		LOG_ERR("APP BT RX CMD queue full");
+	}
+}
+
 void its_rx_callback(struct its_rx_cb_evt_t *evt)
 {
 	static struct app_bt_command bt_cmd = {.command = APP_BT_INT_ITS_RX_EVT};
@@ -188,6 +197,7 @@ void its_rx_callback(struct its_rx_cb_evt_t *evt)
 }
 
 static struct bt_its_cb its_cb = {
+	.ready_cb = its_ready_callback,
 	.rx_cb = its_rx_callback,
 };
 
@@ -247,6 +257,11 @@ static void app_bt_thread_func(void)
 						app_callback_connected();
 					}
 					break;
+				case APP_BT_INT_SCHEDULE_READY_CB:
+					if (app_callback_ready) {
+						app_callback_ready();
+					}
+					break;
 				case APP_BT_INT_SCHEDULE_DISCONNECTED_CB:
 					if (app_callback_disconnected) {
 						app_callback_disconnected();
@@ -271,6 +286,7 @@ int app_bt_init(const struct app_bt_cb *callbacks)
 
 	if (callbacks) {
 		app_callback_connected = callbacks->connected;
+		app_callback_ready = callbacks->ready;
 		app_callback_disconnected = callbacks->disconnected;
 		app_callback_take_picture = callbacks->take_picture;
 		app_callback_enable_stream = callbacks->enable_stream;
@@ -314,6 +330,12 @@ int app_bt_send_picture_header(uint32_t pic_size)
 int app_bt_send_picture_data(uint8_t *buf, uint16_t len)
 {
 	return bt_its_send_img_data(current_conn, buf, len, le_tx_data_length);
+}
+
+int app_bt_send_client_status(uint8_t cam_model, uint8_t resolution)
+{
+	struct its_client_status_t client_status = {.camera_type = cam_model, .selected_resolution_index = resolution};
+	return bt_its_send_client_status(&client_status);
 }
 
 K_THREAD_DEFINE(app_bt_thread, 2048, app_bt_thread_func, NULL, NULL, NULL, 

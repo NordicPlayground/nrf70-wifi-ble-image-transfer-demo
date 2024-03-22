@@ -43,16 +43,22 @@ struct its_rx_cb_evt_t {
 	uint32_t len;
 };
 
-/** @brief Callback type for when an LED state change is received. */
+/** @brief Callback type for when the ITS service is ready */
+typedef void (*its_ready_cb_t)(void);
+
+/** @brief Callback type for when RX data is received. */
 typedef void (*its_rx_cb_t)(struct its_rx_cb_evt_t *evt);
 
 /** @brief Callback struct used by the ITS Service. */
 struct bt_its_cb {
+	/** ITS Ready callback */
+	its_ready_cb_t ready_cb;
+	
 	/** ITS RX callback. */
 	its_rx_cb_t rx_cb;
 };
 
-enum its_img_info_data_type_e {ITS_IMG_INFO_DATA_TYPE_IMG_INFO = 1, ITS_IMG_INFO_DATA_TYPE_BLE_PARAMS = 2};
+enum its_img_info_data_type_e {ITS_IMG_INFO_DATA_TYPE_IMG_INFO = 1, ITS_IMG_INFO_DATA_TYPE_BLE_PARAMS = 2, ITS_IMG_INFO_DATA_TYPE_CLIENT_STATUS = 3};
 
 struct its_img_info_t {
     uint32_t file_size_bytes;   
@@ -65,6 +71,13 @@ struct its_ble_params_info_t {
     uint8_t  rx_phy;
 };
 
+enum its_camera_type_e {ITS_CAM_TYPE_3MP = 1, ITS_CAM_TYPE_5MP = 2};
+
+struct its_client_status_t {
+	uint8_t camera_type;
+	uint8_t selected_resolution_index;
+};
+
 int bt_its_init(struct bt_its_cb *callbacks);
 
 int bt_its_send_img_data(struct bt_conn *conn, uint8_t *buf, uint16_t length, uint16_t le_max_length);
@@ -72,6 +85,8 @@ int bt_its_send_img_data(struct bt_conn *conn, uint8_t *buf, uint16_t length, ui
 int bt_its_send_img_info(struct its_img_info_t *img_info);
 
 int bt_its_send_ble_params_info(struct its_ble_params_info_t *ble_params_info);
+
+int bt_its_send_client_status(struct its_client_status_t *client_status);
 
 #ifdef __cplusplus
 }

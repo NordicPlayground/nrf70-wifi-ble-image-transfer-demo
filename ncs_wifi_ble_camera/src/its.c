@@ -49,6 +49,9 @@ static void its_img_info_ccc_changed(const struct bt_gatt_attr *attr,
 		bt_its_send_ble_params_info(&scheduled_params);
 		scheduled_params.con_interval = 0;
 	}
+	if (its_cb.ready_cb) {
+		its_cb.ready_cb();
+	}
 }
 
 static ssize_t its_rx_received(struct bt_conn *conn,
@@ -120,6 +123,7 @@ BT_GATT_PRIMARY_SERVICE(BT_UUID_ITS), 					    // Attr index: 0
 int bt_its_init(struct bt_its_cb *callbacks)
 {
 	if (callbacks) {
+		its_cb.ready_cb = callbacks->ready_cb;
 		its_cb.rx_cb = callbacks->rx_cb;
 	}
 
@@ -166,6 +170,24 @@ int bt_its_send_img_info(struct its_img_info_t * img_info)
 
 	return bt_gatt_notify(NULL, &its_svc.attrs[7], 
 						  notify_buf, 1 + sizeof(struct its_img_info_t));
+}
+
+int bt_its_send_client_status(struct its_client_status_t * client_status)
+{
+	uint8_t data_size = sizeof(struct its_client_status_t);
+	uint8_t notify_buf[data_size + 1];
+
+	if (!notify_enabled[1]) {
+		return -EACCES;
+	}
+
+	notify_buf[0] = ITS_IMG_INFO_DATA_TYPE_CLIENT_STATUS;
+	memcpy(&notify_buf[1], client_status, data_size);
+	
+	LOG_DBG("Client status Notify TX %i bytes. Cam model %i, resolution: %i", data_size + 1, 
+			client_status->camera_type, client_status->selected_resolution_index);
+
+	return bt_gatt_notify(NULL, &its_svc.attrs[7], notify_buf, data_size + 1);
 }
 
 int bt_its_send_ble_params_info(struct its_ble_params_info_t* ble_params_info)

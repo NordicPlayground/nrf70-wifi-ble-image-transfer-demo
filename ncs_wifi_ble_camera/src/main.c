@@ -60,17 +60,19 @@ extern struct k_msgq udp_recv_queue;
 
 const struct device *video;
 struct video_buffer *vbuf;
+static struct arducam_mega_info mega_info;
 
-enum APP_MODE {
-	APP_MODE_BLE,
-	APP_MODE_UDP
+enum client_type {
+	client_type_NONE,
+	client_type_BLE,
+	client_type_UDP
 };
 
 enum app_command_type {APPCMD_CAM_COMMAND, APPCMD_TAKE_PICTURE, APPCMD_START_STOP_STREAM, APPCMD_UDP_RX};
 
 struct app_command_t {
 	enum app_command_type type;
-	enum APP_MODE mode;
+	enum client_type mode;
 	uint8_t cam_cmd;
 	uint8_t data[6];
 };
@@ -84,8 +86,6 @@ struct client_state {
 };
 struct client_state client_state_ble = {0};
 struct client_state client_state_udp = {0};
-
-static bool capture_flag = false;
 
 static void on_timer_count_bytes_func(struct k_timer *timer);
 K_TIMER_DEFINE(m_timer_count_bytes, on_timer_count_bytes_func, NULL);
@@ -128,10 +128,15 @@ void cam_to_host_command_send(uint8_t type, uint8_t *buffer, uint32_t length)
 	send(socket_send, &udp_head_and_tail[3], 2, 0);
 }
 
-int set_mega_resolution(uint8_t sfmt)
+int set_mega_resolution(uint8_t sfmt, enum client_type source_client)
 {
 	uint8_t resolution = sfmt & 0x0f;
 	uint8_t pixelformat = (sfmt & 0x70) >> 4;
+
+	// If the source is the Bluetooth client, and one of the max resolutions are selected (3MP or 5MP), ensure the right max resolution is selected based on the connected camera type
+	if (source_client == client_type_BLE && (resolution == 8 || resolution == 9)) {
+		resolution = ((mega_info.camera_id == ARDUCAM_SENSOR_3MP_1 || mega_info.camera_id == ARDUCAM_SENSOR_3MP_2)) ? 8 : 9;
+	}
 
 	if (resolution > resolution_num || pixelformat > 3)
 	{
@@ -140,7 +145,18 @@ int set_mega_resolution(uint8_t sfmt)
 	struct video_format fmt = {.width = resolution_table[resolution][0],
 							   .height = resolution_table[resolution][1],
 							   .pixelformat = pixel_format_table[pixelformat - 1]};
+
+	// If the resolution has changed, and the client that initiated the change was UDP, notify the BLE client
+	if (resolution != current_resolution) {
+		if (source_client == client_type_UDP) {
+			app_bt_send_client_status(((mega_info.camera_id == ARDUCAM_SENSOR_3MP_1 || mega_info.camera_id == ARDUCAM_SENSOR_3MP_2)) ? 1 : 2, resolution);
+		} else if (source_client == client_type_BLE) {
+			#warning Add code here to notify python client when resolution changes. 
+		}
+	}
+
 	current_resolution = resolution;
+
 	return video_set_format(video, VIDEO_EP_OUT, &fmt);
 }
 
@@ -203,6 +219,7 @@ static int client_check_stop_request(struct client_state *state)
 void video_preview(void)
 {
 	int err;
+	static bool capture_flag = false;
 	enum video_frame_fragmented_status f_status;
 
 	err = video_dequeue(video, VIDEO_EP_OUT, &vbuf, K_FOREVER);
@@ -277,9 +294,6 @@ int report_mega_info(void)
 	static char str_buf[400];
 	uint32_t str_len;
 	char *mega_type;
-	struct arducam_mega_info mega_info;
-
-	video_get_ctrl(video, VIDEO_CID_ARDUCAM_INFO, &mega_info);
 
 	switch (mega_info.camera_id)
 	{
@@ -320,7 +334,7 @@ uint8_t recv_process(uint8_t *buff)
 	{
 	case SET_PICTURE_RESOLUTION:
 		LOG_INF("camcmd: SET_PICTURE_RESOLUTION");
-		if (set_mega_resolution(buff[1]) == 0)
+		if (set_mega_resolution(buff[1], client_type_UDP) == 0)
 		{
 			take_picture_fmt = buff[1];
 		}
@@ -329,7 +343,7 @@ uint8_t recv_process(uint8_t *buff)
 		LOG_INF("camcmd: SET_VIDEO_RESOLUTION");
 		if (!client_state_udp.stream_active)
 		{
-			set_mega_resolution(buff[1] | 0x10);
+			set_mega_resolution(buff[1] | 0x10, client_type_UDP);
 			client_request_stream_start_stop(&client_state_udp, true);
 		}
 		break;
@@ -412,6 +426,12 @@ void app_bt_connected_callback(void)
 	LOG_INF("Bluetooth connection established");
 }
 
+void app_bt_ready_callback(void)
+{
+	LOG_INF("Bluetooth client ready");
+	app_bt_send_client_status(((mega_info.camera_id == ARDUCAM_SENSOR_3MP_1 || mega_info.camera_id == ARDUCAM_SENSOR_3MP_2)) ? 1 : 2, current_resolution);
+}
+
 void app_bt_disconnected_callback(void)
 {
 	LOG_INF("Bluetooth disconnected");
@@ -424,14 +444,14 @@ void app_bt_disconnected_callback(void)
 void app_bt_take_picture_callback(void)
 {
 	static struct app_command_t cmd_take_picture = 
-		{.type = APPCMD_TAKE_PICTURE, .mode = APP_MODE_BLE,};
+		{.type = APPCMD_TAKE_PICTURE, .mode = client_type_BLE,};
 	register_app_command(&cmd_take_picture);
 }
 
 void app_bt_enable_stream_callback(bool enable)
 {
 	static struct app_command_t cmd_stream_start_stop = 
-		{.type = APPCMD_START_STOP_STREAM, .mode = APP_MODE_BLE,};
+		{.type = APPCMD_START_STOP_STREAM, .mode = client_type_BLE,};
 	cmd_stream_start_stop.data[0] = enable ? 1 : 0;
 	register_app_command(&cmd_stream_start_stop);
 }
@@ -443,10 +463,13 @@ void app_bt_change_resolution_callback(uint8_t resolution)
 		 .cam_cmd = SET_PICTURE_RESOLUTION};
 	cmd_take_picture.data[0] = 0x10 | (resolution & 0xF);
 	register_app_command(&cmd_take_picture);
+
+	current_resolution = resolution;
 }
 
 const struct app_bt_cb app_bt_callbacks = {
 	.connected = app_bt_connected_callback,
+	.ready = app_bt_ready_callback,
 	.disconnected = app_bt_disconnected_callback,
     .take_picture = app_bt_take_picture_callback,
 	.enable_stream = app_bt_enable_stream_callback,
@@ -464,7 +487,7 @@ static void on_timer_count_bytes_func(struct k_timer *timer)
 void udp_rx_callback(uint8_t *data, uint16_t len)
 {
 	static struct app_command_t app_cmd_udp = {.type = APPCMD_UDP_RX};
-	LOG_INF("UDP RX callback");
+	LOG_DBG("UDP RX callback");
 	memcpy(app_cmd_udp.data, data, len);
 	register_app_command(&app_cmd_udp);
 }
@@ -492,6 +515,8 @@ int main(void)
 	video_stream_stop(video);
 	LOG_INF("Device %s is ready!", video->name);
 
+	video_get_ctrl(video, VIDEO_CID_ARDUCAM_INFO, &mega_info);
+
 	ret = app_bt_init(&app_bt_callbacks);
 	if (ret < 0) {
 		LOG_ERR("Error initializing Bluetooth");
@@ -514,7 +539,7 @@ int main(void)
 
 	k_timer_start(&m_timer_count_bytes, K_MSEC(1000), K_MSEC(1000));
 	
-	set_mega_resolution(0x11);
+	set_mega_resolution(0x11, client_type_NONE);
 
 	video_stream_start(video);
 	
@@ -530,7 +555,7 @@ int main(void)
 					switch (new_command.cam_cmd) {
 						case SET_PICTURE_RESOLUTION:
 							LOG_INF("Change resolution to 0x%x", new_command.data[0]);
-							set_mega_resolution(new_command.data[0]);
+							set_mega_resolution(new_command.data[0], client_type_BLE);
 							break;
 					}
 					break;
