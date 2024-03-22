@@ -48,6 +48,8 @@ LOG_MODULE_REGISTER(NetUtil, CONFIG_LOG_DEFAULT_LEVEL);
 #define L2_EVENT_MASK (NET_EVENT_WIFI_CONNECT_RESULT | NET_EVENT_WIFI_DISCONNECT_RESULT)
 #define L3_EVENT_MASK NET_EVENT_IPV4_DHCP_BOUND
 
+uint8_t udp_head_and_tail[] = {0xff, 0xaa, 0x00, 0xff, 0xbb};
+
 /* Declare the callback structure for Wi-Fi events */
 static struct net_mgmt_event_callback wifi_mgmt_cb;
 static struct net_mgmt_event_callback net_mgmt_cb;
@@ -70,6 +72,32 @@ void net_util_set_callback(net_util_udp_rx_callback_t udp_rx_callback)
 	while (k_msgq_get(&udp_recv_queue, buf, K_NO_WAIT) == 0) {
 		udp_rx_cb(buf, 6);
 	}
+}
+
+uint8_t process_udp_rx_buffer(char *udp_rx_buf, char *command_buf)
+{
+	uint8_t command_length = 0;
+
+	// Check if udp_rx_buf contains start code (0x55)
+	if (udp_rx_buf[0] == 0x55)
+	{
+		// Find the end code (0xAA) and extract the command
+		for (uint8_t i = 1; i < UDP_COMMAND_MAX_SIZE; i++)
+		{
+			if (udp_rx_buf[i] == 0xAA)
+			{
+				// Copy the command to command_buf
+				for (uint8_t j = 1; j < i; j++)
+				{
+					command_buf[j - 1] = udp_rx_buf[j];
+				}
+				command_length = i - 1; // Length of the command
+				break;
+			}
+		}
+	}
+
+	return command_length;
 }
 
 /*
