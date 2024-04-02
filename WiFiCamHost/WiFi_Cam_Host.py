@@ -191,12 +191,16 @@ class ArducamMegaCameraDataProcess:
             elif command_type == b'\x06':
                 # Streamoff command
                 return self.process_streamoff_command(payload)
-            elif command_type == b'\xFF':
-                # Camera change to APP_MODE_BLE
-                return self.process_ble_mode_command(payload)
-            elif command_type == b'\xAA':
-                # Camera change to APP_MODE_UDP
-                return self.process_udp_mode_command(payload)
+            elif command_type == b'\x07':
+                new_resolution = command[7]
+                # Camera change resolution
+                return self.process_resolution_change_notification(new_resolution)
+            elif command_type == b'\x08':
+                # BLE client is connected!
+                return self.process_ble_connection_established_command()
+            elif command_type == b'\x09':
+                # BLE client is disconnected!
+                return self.process_ble_disconnect_command()
             else:
                 return "Unknown command type"
         elif start_marker == b'\xFF\xBB':
@@ -237,7 +241,6 @@ class ArducamMegaCameraDataProcess:
             elif "Camera Type:5MP" in info_payload:
                 # Delete max resulation for Camera Type:3MP
                 self.update_resolution_options(remove_option="2048x1536")
-        print(f"Connected to WiFi Camera!")     
         return f"Connected to WiFi Camera!\n{info_payload}"
     
     def update_resolution_options(self, remove_option):
@@ -275,15 +278,20 @@ class ArducamMegaCameraDataProcess:
         # Process streamoff command payload
         return "Streamoff command received"
 
+    def process_resolution_change_notification(self, new_resolution):
+        # Camera change resolution
+        resolution = new_resolution
+        return f"New Resolution from BLE Client:{resolution}"
+    
     def process_stop_command(self, command_type, payload_length, payload):
         # Process stop command
         return f"Stop command received. Command type: {command_type}, Payload length: {payload_length}, Payload: {payload}"
     
-    def process_ble_mode_command(self, payload):
-        return "Camera switch to BLE mode"
+    def process_ble_connection_established_command(self):
+        return "Camera establish connection with BLE client!"
 
-    def process_udp_mode_command(self, payload):
-        return "Camera switch to UDP mode"
+    def process_ble_disconnect_command(self):
+        return "Camera disconnect with BLE client!"
         
 
 
@@ -623,6 +631,17 @@ class WifiCamHostGUI(QMainWindow):
             img_path = "img.temp"
             pixmap = QPixmap(img_path)
             self.video_frame_label.setPixmap(pixmap)
+
+        # Extract the resolution from the input string
+        if result.startswith("New Resolution from BLE Client"):
+            new_resolution = int(result.split(":")[-1].strip())
+            # Check if the new_resolution is a valid key in the IMAGE_RESOLUTION_OPTIONS dictionary
+            if new_resolution in self.IMAGE_RESOLUTION_OPTIONS:
+                # Set the current index of the combo box to the index corresponding to the new resolution
+                self.image_resolution_combobox.setCurrentIndex(list(self.IMAGE_RESOLUTION_OPTIONS.keys()).index(new_resolution))
+            else:
+                print("New resolution not found in options.")
+                
         
         if result.startswith("Camera switch to BLE mode"):
             self.send_command(self.commands.command_stop_stream())

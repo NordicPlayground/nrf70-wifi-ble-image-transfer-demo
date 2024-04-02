@@ -123,8 +123,10 @@ void cam_to_host_command_send(uint8_t type, uint8_t *buffer, uint32_t length)
 {
 	udp_head_and_tail[2] = type;
 	send(socket_send, &udp_head_and_tail[0], 3, 0);
-	send(socket_send, (uint8_t *)&length, 4, 0);
-	send(socket_send, buffer, length, 0);
+	if(length!=0){
+		send(socket_send, (uint8_t *)&length, 4, 0);
+		send(socket_send, buffer, length, 0);
+	}
 	send(socket_send, &udp_head_and_tail[3], 2, 0);
 }
 
@@ -145,13 +147,12 @@ int set_mega_resolution(uint8_t sfmt, enum client_type source_client)
 	struct video_format fmt = {.width = resolution_table[resolution][0],
 							   .height = resolution_table[resolution][1],
 							   .pixelformat = pixel_format_table[pixelformat - 1]};
-
 	// If the resolution has changed, and the client that initiated the change was UDP, notify the BLE client
 	if (resolution != current_resolution) {
 		if (source_client == client_type_UDP) {
 			app_bt_send_client_status(((mega_info.camera_id == ARDUCAM_SENSOR_3MP_1 || mega_info.camera_id == ARDUCAM_SENSOR_3MP_2)) ? 1 : 2, resolution);
 		} else if (source_client == client_type_BLE) {
-			#warning Add code here to notify python client when resolution changes. 
+			cam_to_host_command_send(0x07, &resolution, sizeof(resolution));
 		}
 	}
 
@@ -424,12 +425,15 @@ static void register_app_command(const struct app_command_t *command)
 void app_bt_connected_callback(void)
 {	
 	LOG_INF("Bluetooth connection established");
+	//send command 0x08 to inform WiFi Host BLE client is connected.
+	cam_to_host_command_send(0x08, NULL,0);
 }
 
 void app_bt_ready_callback(void)
 {
 	LOG_INF("Bluetooth client ready");
 	app_bt_send_client_status(((mega_info.camera_id == ARDUCAM_SENSOR_3MP_1 || mega_info.camera_id == ARDUCAM_SENSOR_3MP_2)) ? 1 : 2, current_resolution);
+	
 }
 
 void app_bt_disconnected_callback(void)
@@ -439,6 +443,8 @@ void app_bt_disconnected_callback(void)
 	client_state_ble.req_stream = 0;
 	client_state_ble.req_stream_stop = 0;
 	client_state_ble.stream_active = 0;
+	//send command 0x09 to inform WiFi Host BLE client is disconnected.
+	cam_to_host_command_send(0x09, NULL,0);
 }
 
 void app_bt_take_picture_callback(void)
@@ -464,7 +470,7 @@ void app_bt_change_resolution_callback(uint8_t resolution)
 	cmd_take_picture.data[0] = 0x10 | (resolution & 0xF);
 	register_app_command(&cmd_take_picture);
 
-	current_resolution = resolution;
+	//current_resolution = resolution;
 }
 
 const struct app_bt_cb app_bt_callbacks = {
