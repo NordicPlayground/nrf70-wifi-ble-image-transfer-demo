@@ -228,7 +228,7 @@ class ArducamMegaCameraDataProcess:
             img.save("img.temp", "JPEG")
         except Exception as e:
             error_message = f"Error occurred while processing image: {str(e)}"
-        return f"FrameSize: {bytesframe} KB\nFrames-per-second: {fps:.2f}\nThroughput: {bytesframe*8*fps/1024:.2f} kbps\n"
+        return f"FrameSize: {bytesframe} Bytes\nFrames-per-second: {fps:.2f}\nThroughput: {bytesframe*8*fps/1024:.2f} kbps\n"
         
     def process_info_command(self, payload_length, payload):
         # Process info command payload
