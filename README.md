@@ -45,14 +45,14 @@ UDP Client(WiFiCamHost+PC):50005 <<-> UDP Server(WiFiCam+nRF7002DK):60006 = sock
 
 socket_recv is built by the UDP server to wait for the UDP client to connect to its address, then the server can know the client address. The server builds a new socket_send to send WiFiCam data like camera info, and video frame to the client. The previous socket_recv is used to receive commands from the UDP client. 
 
-## Install nRF Connect SDK(NCS) version 2.6.0
+## Install nRF Connect SDK(NCS) version 2.5.2
 
-Please refer to https://developer.nordicsemi.com/nRF_Connect_SDK/doc/2.6.0/nrf/installation.html
+Please refer to https://developer.nordicsemi.com/nRF_Connect_SDK/doc/2.5.2/nrf/installation.html
 
 ## Cherry pick ArduCAM Mega Zephyr driver
 Open a TERMINAL with nRF Connect environment at VS code, run the following commands.
 ```
-cd c:/NCS/v2.6.0/zephyr
+cd c:/ncs/v2.5.2/zephyr
 git remote add arducam https://github.com/ArduCAM/zephyr.git 
 git fetch arducam
 From https://github.com/ArduCAM/zephyr
@@ -71,8 +71,15 @@ git remote remove arducam
 ## Download this repository
 
 ```
-git clone https://github.com/charlieshao5189/nRF70_WiFi_Camera_Demo.git
+git clone https://github.com/NordicPlayground/nrf70-wifi-ble-image-transfer-demo.git
 ```
+
+## Add patched arducam driver
+
+Copy the file replace_arducam_mega.c from this repository into the following SDK folder:
+C:\ncs\v2.5.2\zephyr\drivers\video
+
+Rename or delete the original arducam_mega.c file, and rename replace_arducam_mega.c to arducam_mega.c
 
 ## Firmware Building
 
@@ -85,26 +92,6 @@ Build the firmwre with defalut configuration using nRF Connect SDK VS Code exter
 ```
 west build -b nRF7002dk_nrf5340_cpuapp
 ```
-
-Open an uart terminal which connected with nRF7002DK VCOM1. Try the following commands to connect with target WiFi AP. You can learn from DevAcademy [WiFi Fundamentals course Exercise 1](https://academy.nordicsemi.com/courses/wi-fi-fundamentals/lessons/lesson-3-wifi-fundamentals/topic/lesson-3-exercise-1-2/) to get more details about "wifi_cred" commands.
-
-```
-uart:~$ wifi_cred help
-wifi_cred - Wi-Fi Credentials commands
-Subcommands:
-  add           :Add network to storage.
-  auto_connect  :Connect to any stored network.
-  delete        :Delete network from storage.
-  list          :List stored networks.
-uart:~$ wifi_cred add help
-Usage: wifi_cred add "network name" {OPEN, WPA2-PSK, WPA2-PSK-SHA256, WPA3-SAE} [psk/password] [bssid] [{2.4GHz, 5GHz}] [favorite]
-uart:~$ wifi_cred add "your-ssid" WPA2-PSK "your-password"
-uart:~$ wifi_cred auto_connect
-
-```
-If nRF7002DK connect with a AP succesfully, the WiFi credentionals will be stored. nRF7002DK will try to reconnect automatically using stored credentionals after device reset. A prebuild firware is avaliable in prebuiltFW folder.
-
-A pre-built fimrware with wifi_cred shell support is avliable here [prebuildtFW/ncs251_wifi_camera_shell.hex](prebuildtFW/).
 
 2) Firmware that enables WiFi with static crendtials.
 
@@ -123,6 +110,27 @@ CONFIG_WIFI_CREDENTIALS_STATIC_PASSWORD="your-password"
 # Disable support for shell commands
 CONFIG_SHELL=n
 ```
+## Wi-Fi provisioning
+
+Assuming step 1) was chosen during the Firmware Building phase, Wi-Fi provisioning has to be handled at runtime. To do so open an uart terminal which connected with nRF7002DK VCOM1. Try the following commands to connect with target WiFi AP. You can learn from DevAcademy [WiFi Fundamentals course Exercise 1](https://academy.nordicsemi.com/courses/wi-fi-fundamentals/lessons/lesson-3-wifi-fundamentals/topic/lesson-3-exercise-1-2/) to get more details about "wifi_cred" commands.
+
+```
+uart:~$ wifi_cred help
+wifi_cred - Wi-Fi Credentials commands
+Subcommands:
+  add           :Add network to storage.
+  auto_connect  :Connect to any stored network.
+  delete        :Delete network from storage.
+  list          :List stored networks.
+uart:~$ wifi_cred add help
+Usage: wifi_cred add "network name" {OPEN, WPA2-PSK, WPA2-PSK-SHA256, WPA3-SAE} [psk/password] [bssid] [{2.4GHz, 5GHz}] [favorite]
+uart:~$ wifi_cred add "your-ssid" WPA2-PSK "your-password"
+uart:~$ wifi_cred auto_connect
+
+```
+If nRF7002DK connect with a AP succesfully, the WiFi credentionals will be stored. nRF7002DK will try to reconnect automatically using stored credentionals after device reset. A prebuild firware is avaliable in prebuiltFW folder.
+
+A pre-built fimrware with wifi_cred shell support is avliable here [prebuildtFW/ncs252_wifi_camera_shell_ew24.hex](prebuildtFW/).
 
 # WiFi Camera Host GUI Application(WiFiCamHost) 
 
