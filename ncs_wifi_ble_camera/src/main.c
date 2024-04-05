@@ -237,17 +237,6 @@ void video_preview(void)
 	{
 		capture_flag = false;
 
-		if(f_status == VIDEO_BUF_EOF) {
-			LOG_WRN("Capture flag set while status EOF. Skipping!");
-			err = video_enqueue(video, VIDEO_EP_OUT, vbuf);
-			if (err)
-			{
-				LOG_ERR("Unable to requeue video buf");
-				return;
-			}
-			return;
-		}
-
 		client_check_start_request(&client_state_ble);
 		client_check_start_request(&client_state_udp);
 
