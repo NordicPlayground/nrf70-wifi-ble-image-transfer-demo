@@ -1,5 +1,5 @@
 # nRF70_WiFi_Camera_Demo
-WiFi Camera demo based on nRF7002DK and Arducam Mega Camera.
+WiFi Camera demo based on the nRF7002DK and the Arducam Mega Camera.
 
 # Hardware Setup
 
@@ -19,25 +19,25 @@ WiFi Camera demo based on nRF7002DK and Arducam Mega Camera.
 
 ## Hardware Connection
 
-On nRF7002DK, the nRF5340 host MCU use 1.8v as VDD supply voltage for IO pins to interface with WiFi companion IC nRF7002. Arducam Mega Camera IO voltage only support 3.3v/5v.
-Considering the max acceptable VDD supply voltage for nRF7002 is 3.6v according to nRF7002 specification(Table 11: Recommended operating conditions). We need to change nRF5340 IO VDD supply voltage from 1.8v to 3.3v. 
+On the nRF7002DK, the nRF5340 host MCU uses 1.8v as VDD supply voltage for IO pins to interface with the nRF7002 WiFi companion IC. The Arducam Mega Camera IO voltage only supports 3.3v/5v.
+Considering the max acceptable VDD supply voltage for the nRF7002 is 3.6v according to the nRF7002 specification(Table 11: Recommended operating conditions) we need to change nRF5340 IO VDD supply voltage from 1.8v to 3.3v. 
 
-Accroding to following regulator design in nRF7002DK schematic, modifying R60 to 375K or R63 to 48K will change IO VDD to 3.3v.
+According to the following regulator design in the nRF7002DK schematic, modifying R60 to 375K or R63 to 48K will change the IO voltage to 3.3v.
 
 ![VDD_IO](images/IO_VDD.png)
 
-Here is the pin connection with Arducam Mega SPI Camera marked on nRF7002DK.
+Here is the pin connection with the Arducam Mega SPI Camera marked on the nRF7002DK.
 
 ![connection](images/connection.png)
 
 
-# Firmware Prepare
+# Firmware Preparation
 
 ---
 
-## How firmware works
+## How the firmware works
 
-Two sockets are used by the UDP Server(WiFiCam+nRF7002DK).
+Two sockets are used by the UDP Server(WiFiCam + nRF7002DK).
 
 UDP Client(WiFiCamHost+PC):50000 <->> UDP Server(WiFiCam+nRF7002DK):60000 = socket_recv
 
@@ -50,7 +50,7 @@ socket_recv is built by the UDP server to wait for the UDP client to connect to 
 Please refer to https://developer.nordicsemi.com/nRF_Connect_SDK/doc/2.5.2/nrf/installation.html
 
 ## Cherry pick ArduCAM Mega Zephyr driver
-Open a TERMINAL with nRF Connect environment at VS code, run the following commands.
+Open a TERMINAL with nRF Connect environment at VS code, and run the following commands.
 ```
 cd c:/ncs/v2.5.2/zephyr
 git remote add arducam https://github.com/ArduCAM/zephyr.git 
@@ -87,7 +87,7 @@ There are two options for enabling WiFi connection. If the WiFi AP(Access Point)
 
 1) Firmware that enables WiFi using terminal commands. 
 
-Build the firmwre with defalut configuration using nRF Connect SDK VS Code externsion or following command.
+Build the firmwre with default configuration using nRF Connect SDK VS Code extension or the following command:
 
 ```
 west build -b nRF7002dk_nrf5340_cpuapp
@@ -112,7 +112,7 @@ CONFIG_SHELL=n
 ```
 ## Wi-Fi provisioning
 
-Assuming step 1) was chosen during the Firmware Building phase, Wi-Fi provisioning has to be handled at runtime. To do so open an uart terminal which connected with nRF7002DK VCOM1. Try the following commands to connect with target WiFi AP. You can learn from DevAcademy [WiFi Fundamentals course Exercise 1](https://academy.nordicsemi.com/courses/wi-fi-fundamentals/lessons/lesson-3-wifi-fundamentals/topic/lesson-3-exercise-1-2/) to get more details about "wifi_cred" commands.
+Assuming step 1) was chosen during the Firmware Building phase, Wi-Fi provisioning has to be handled at runtime. To do so open a UART terminal and connect it to VCOM1 on the nRF7002DK. Use the following commands to connect with the target WiFi AP. Please refer to DevAcademy [WiFi Fundamentals course Exercise 1](https://academy.nordicsemi.com/courses/wi-fi-fundamentals/lessons/lesson-3-wifi-fundamentals/topic/lesson-3-exercise-1-2/) for more details about "wifi_cred" commands.
 
 ```
 uart:~$ wifi_cred help
@@ -128,16 +128,15 @@ uart:~$ wifi_cred add "your-ssid" WPA2-PSK "your-password"
 uart:~$ wifi_cred auto_connect
 
 ```
-If nRF7002DK connect with a AP succesfully, the WiFi credentionals will be stored. nRF7002DK will try to reconnect automatically using stored credentionals after device reset. A prebuild firware is avaliable in prebuiltFW folder.
-
+If the nRF7002DK connected with an AP succesfully, the WiFi credentionals will be stored. The nRF7002DK will try to reconnect automatically using stored credentionals after a device reset.
 A pre-built fimrware with wifi_cred shell support is avliable here [prebuildtFW/ncs252_wifi_camera_shell_ew24.hex](prebuildtFW/).
 
 # WiFi Camera Host GUI Application(WiFiCamHost) 
 
 ---
 
-The WiFICamHost is a python script that can run on any PC to communicate WiFi Camera Device(nRF7002DK+ArducamMegaCamera here) through UDP protocol.
-Ensure you have installed a recent Python version then run the following command to start the application on your PC terminal.
+The WiFICamHost is a python script that can run on any PC to communicate with the WiFi Camera Device(nRF7002DK + ArducamMegaCamera here) through the UDP protocol.
+Ensure you have installed a recent Python version then run the following command to start the application on your PC terminal:
 
 ```
 cd WiFICamHost
@@ -149,18 +148,18 @@ python WiFi_Cam_Host.py
 
 ---
 
-1) Get the WiFi Camera address from its log after the WiFi connection is built.
+1) Get the WiFi Camera address from its log after the WiFi connection is established.
 ```
  <inf> NetUtil: WiFi Camera Server is ready on nRF7002DK, copy and paste 192.168.1.101:60000 in Target WiFi Camera Address window on WiFi Camera Host.
 ```
-2) Run the WiFiCamHost script and connect to the target address from a PC in the same local network.
+2) Run the WiFiCamHost script and connect to the target address from a PC on the same local network.
 3) In the Video table, choose a resolution and press start stream, then the video stream will start.
 
 ![WiFiCamHost](images/WiFiCamHost.png)
 
 ## Future Improvments
 
-1) Modify overlay-tx-prioritized.conf can potentionafially improve WiFi speed.
+1) Modify overlay-tx-prioritized.conf to potentioally improve WiFi speed.
 2) FPS and ThroughPut calculation in WiFi_Cam_Host.py is not accurate.
 3) [zperf](https://academy.nordicsemi.com/courses/wi-fi-fundamentals/lessons/lesson-3-wifi-fundamentals/topic/lesson-3-exercise-2/) can be used to evaluate current WiFi environment, e.g. general UDP bandwidth, loss rate.
 4) A simple test on 5GH band WiFi AP shows that socket_recv is ok, but socket_send seems to be blocked for some reason. Tests on 2.4GH have no issue.
