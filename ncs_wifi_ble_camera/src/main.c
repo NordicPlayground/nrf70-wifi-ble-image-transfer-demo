@@ -23,9 +23,9 @@ LOG_MODULE_REGISTER(WiFiCam, CONFIG_LOG_DEFAULT_LEVEL);
 #include <zephyr/net/socket.h>
 
 #include "app_bluetooth.h"
-#include "net_util.h"
+#include "socket_util.h"
 
-extern int socket_send;
+extern int cam_socket;
 extern uint8_t udp_recv_buf[];
 extern struct k_msgq udp_recv_queue;
 
@@ -122,12 +122,12 @@ static uint8_t take_picture_fmt = 0x1a;
 void cam_to_host_command_send(uint8_t type, uint8_t *buffer, uint32_t length)
 {
 	udp_head_and_tail[2] = type;
-	send(socket_send, &udp_head_and_tail[0], 3, 0);
+	send(cam_socket, &udp_head_and_tail[0], 3, 0);
 	if(length!=0){
-		send(socket_send, (uint8_t *)&length, 4, 0);
-		send(socket_send, buffer, length, 0);
+		send(cam_socket, (uint8_t *)&length, 4, 0);
+		send(cam_socket, buffer, length, 0);
 	}
-	send(socket_send, &udp_head_and_tail[3], 2, 0);
+	send(cam_socket, &udp_head_and_tail[3], 2, 0);
 }
 
 int set_mega_resolution(uint8_t sfmt, enum client_type source_client)
@@ -165,12 +165,12 @@ void send_picture_data_udp(uint8_t *data, int length)
 {
 	counted_bytes_sent += length;
 	while (length >= 1024) {
-		send(socket_send, data, 1024, 0); 
+		send(cam_socket, data, 1024, 0); 
 		data += 1024;
 		length -= 1024;
 	}
 	if (length > 0) {
-		send(socket_send, data, length, 0); 
+		send(cam_socket, data, length, 0); 
 	}
 }
 
@@ -245,10 +245,10 @@ void video_preview(void)
 		} 
 		if (client_state_udp.stream_active) {
 			udp_head_and_tail[2] = 0x01;
-			send(socket_send, &udp_head_and_tail[0], 3, 0);
-			send(socket_send, (uint8_t *)&vbuf->bytesframe, 4, 0);
+			send(cam_socket, &udp_head_and_tail[0], 3, 0);
+			send(cam_socket, (uint8_t *)&vbuf->bytesframe, 4, 0);
 			target_resolution = (((current_resolution & 0x0f) << 4) | 0x01);
-			send(socket_send, &target_resolution, 1, 0);
+			send(cam_socket, &target_resolution, 1, 0);
 		}
 	}
 
@@ -264,7 +264,7 @@ void video_preview(void)
 		capture_flag = true;
 
 		if (client_state_udp.stream_active) {
-			send(socket_send, &udp_head_and_tail[3], 2, 0);
+			send(cam_socket, &udp_head_and_tail[3], 2, 0);
 		}
 
 		client_check_stop_request(&client_state_ble);

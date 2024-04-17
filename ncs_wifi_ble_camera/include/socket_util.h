@@ -1,5 +1,5 @@
-#ifndef __NET_UTIL_H
-#define __NET_UTIL_H
+#ifndef __SOCKET_UTIL_H
+#define __SOCKET_UTIL_H
 
 #include <zephyr/kernel.h>
 
