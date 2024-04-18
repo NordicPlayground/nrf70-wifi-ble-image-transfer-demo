@@ -25,9 +25,11 @@ LOG_MODULE_REGISTER(WiFiCam, CONFIG_LOG_DEFAULT_LEVEL);
 #include "app_bluetooth.h"
 #include "socket_util.h"
 
+/**********External resources**************/
 extern int cam_socket;
 extern uint8_t udp_recv_buf[];
 extern struct k_msgq udp_recv_queue;
+extern struct sockaddr_in pc_addr;
 
 #define RESET_CAMERA 0XFF
 #define SET_PICTURE_RESOLUTION 0X01
@@ -91,6 +93,9 @@ static void on_timer_count_bytes_func(struct k_timer *timer);
 K_TIMER_DEFINE(m_timer_count_bytes, on_timer_count_bytes_func, NULL);
 static int counted_bytes_sent = 0;
 
+/* actucal command not count start(0x55) and stop(0xAA) codes*/
+uint8_t udp_head_and_tail[] = {0xff, 0xaa, 0x00, 0xff, 0xbb};
+
 const uint32_t pixel_format_table[] = {
 	VIDEO_PIX_FMT_JPEG,
 	VIDEO_PIX_FMT_RGB565,
@@ -119,15 +124,19 @@ static uint8_t current_resolution;
 static uint8_t target_resolution;
 static uint8_t take_picture_fmt = 0x1a;
 
+static void cam_send(const void *buf, size_t len){
+      sendto(cam_socket, buf, len, 0, (struct sockaddr *)&pc_addr,  sizeof(pc_addr));
+}
+
 void cam_to_host_command_send(uint8_t type, uint8_t *buffer, uint32_t length)
 {
 	udp_head_and_tail[2] = type;
-	send(cam_socket, &udp_head_and_tail[0], 3, 0);
+	cam_send(&udp_head_and_tail[0], 3);
 	if(length!=0){
-		send(cam_socket, (uint8_t *)&length, 4, 0);
-		send(cam_socket, buffer, length, 0);
+		cam_send((uint8_t *)&length, 4);
+		cam_send(buffer, length);
 	}
-	send(cam_socket, &udp_head_and_tail[3], 2, 0);
+	cam_send(&udp_head_and_tail[3], 2);
 }
 
 int set_mega_resolution(uint8_t sfmt, enum client_type source_client)
@@ -161,20 +170,20 @@ int set_mega_resolution(uint8_t sfmt, enum client_type source_client)
 	return video_set_format(video, VIDEO_EP_OUT, &fmt);
 }
 
-void send_picture_data_udp(uint8_t *data, int length)
+void cam_send_picture_data_udp(uint8_t *data, int length)
 {
 	counted_bytes_sent += length;
 	while (length >= 1024) {
-		send(cam_socket, data, 1024, 0); 
+		cam_send(data, 1024); 
 		data += 1024;
 		length -= 1024;
 	}
 	if (length > 0) {
-		send(cam_socket, data, length, 0); 
+		cam_send(data, length); 
 	}
 }
 
-void send_picture_data_ble(uint8_t *data, int length)
+void cam_send_picture_data_ble(uint8_t *data, int length)
 {
 	counted_bytes_sent += length;
 	app_bt_send_picture_data(data, length);
@@ -245,18 +254,18 @@ void video_preview(void)
 		} 
 		if (client_state_udp.stream_active) {
 			udp_head_and_tail[2] = 0x01;
-			send(cam_socket, &udp_head_and_tail[0], 3, 0);
-			send(cam_socket, (uint8_t *)&vbuf->bytesframe, 4, 0);
+			cam_send(&udp_head_and_tail[0], 3);
+			cam_send((uint8_t *)&vbuf->bytesframe, 4);
 			target_resolution = (((current_resolution & 0x0f) << 4) | 0x01);
-			send(cam_socket, &target_resolution, 1, 0);
+			cam_send(&target_resolution, 1);
 		}
 	}
 
 	if (client_state_ble.stream_active) {
-		send_picture_data_ble(vbuf->buffer, vbuf->bytesused);
+		cam_send_picture_data_ble(vbuf->buffer, vbuf->bytesused);
 	} 
 	if (client_state_udp.stream_active) {
-		send_picture_data_udp(vbuf->buffer, vbuf->bytesused);
+		cam_send_picture_data_udp(vbuf->buffer, vbuf->bytesused);
 	}
 
 	if (f_status == VIDEO_BUF_EOF)
@@ -264,7 +273,7 @@ void video_preview(void)
 		capture_flag = true;
 
 		if (client_state_udp.stream_active) {
-			send(cam_socket, &udp_head_and_tail[3], 2, 0);
+			cam_send(&udp_head_and_tail[3], 2);
 		}
 
 		client_check_stop_request(&client_state_ble);
@@ -414,7 +423,7 @@ static void register_app_command(const struct app_command_t *command)
 void app_bt_connected_callback(void)
 {	
 	LOG_INF("Bluetooth connection established");
-	//send command 0x08 to inform WiFi Host BLE client is connected.
+	//cam_send command 0x08 to inform WiFi Host BLE client is connected.
 	cam_to_host_command_send(0x08, NULL,0);
 }
 
@@ -432,7 +441,7 @@ void app_bt_disconnected_callback(void)
 	client_state_ble.req_stream = 0;
 	client_state_ble.req_stream_stop = 0;
 	client_state_ble.stream_active = 0;
-	//send command 0x09 to inform WiFi Host BLE client is disconnected.
+	//cam_send command 0x09 to inform WiFi Host BLE client is disconnected.
 	cam_to_host_command_send(0x09, NULL,0);
 }
 

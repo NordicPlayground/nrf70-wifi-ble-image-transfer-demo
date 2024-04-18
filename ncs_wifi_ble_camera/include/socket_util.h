@@ -5,8 +5,10 @@
 
 #define UDP_COMMAND_MAX_SIZE 6
 
-/* actucal command not count start(0x55) and stop(0xAA) codes*/
-extern uint8_t udp_head_and_tail[];
+enum wifi_modes {
+	WIFI_STATION_MODE = 0,
+    WIFI_SOFTAP_MODE,
+};
 
 typedef void (*net_util_udp_rx_callback_t)(uint8_t *data, uint16_t len);
 

@@ -11,6 +11,7 @@ from PyQt5.QtWidgets import *
 
 
 
+
 class CommandsToCamera:
     START_CHARACTER = 0x55
     STOP_CHARACTER = 0xAA
@@ -292,29 +293,24 @@ class ArducamMegaCameraDataProcess:
 
     def process_ble_disconnect_command(self):
         return "Camera disconnect with BLE client!"
-        
 
-
-class UDPClient(QObject):
+class SocketClient(QObject):
     command_receiving_signal = pyqtSignal(bytes)
 
-    def __init__(self, server_address='192.168.1.122', server_port=60000):
+    def __init__(self, cam_address='192.168.1.1', cam_port=60000):
         super().__init__()
-        self.server_address = server_address
-        self.server_port = server_port
-        self.buffer_size = 1024
+        self.cam_address = cam_address
+        self.cam_port = cam_port
+        self.buffer_size = 2048
         self.camera = ArducamMegaCameraDataProcess()
-        self.client_send_udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.client_send_udp_socket.bind(('0.0.0.0', 50000))
-        self.client_recv_udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.client_recv_udp_socket.bind(('0.0.0.0', 50005))
+        self.pc_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.pc_socket.bind(('0.0.0.0', 60006))
         self.log_content_text = QTextEdit()  # Placeholder for received content text edit widget
         self.command_buffer = b''  # Buffer to store the command packets
         self.in_command = False  # Flag to indicate if currently receiving a command
 
     def close_sockets(self):
-        self.client_send_udp_socket.close()
-        self.client_recv_udp_socket.close()
+        self.pc_socket.close()
 
     def send_command(self, command_str):
         try:
@@ -322,7 +318,7 @@ class UDPClient(QObject):
             command_bytes = bytes.fromhex(command_str)
 
             # Send the command bytes to the server
-            self.client_send_udp_socket.sendto(command_bytes, (self.server_address, self.server_port))
+            self.pc_socket.sendto(command_bytes, (self.cam_address, self.cam_port))
 
         except Exception as e:
             QMessageBox.critical(None, "Error", str(e))
@@ -331,7 +327,7 @@ class UDPClient(QObject):
         try:
             while True:
                 # Receive data
-                data, _ = self.client_recv_udp_socket.recvfrom(self.buffer_size)
+                data, _ = self.pc_socket.recvfrom(self.buffer_size)
                 # Print the received content as hexadecimal
                 # received_hex = ' '.join(f'{byte:02x}' for byte in data)
                 # print(f"Received: {received_hex}")
@@ -403,25 +399,18 @@ class WifiCamHostGUI(QMainWindow):
         target_ip = self.config['DEFAULT']['TargetIP'] 
         target_port = int(self.config['DEFAULT']['TargetPort'])
         self.target_server = (target_ip, target_port)
-        # self.target_server = self.config['DEFAULT']['Target_server']
-        self.client = UDPClient(*self.target_server)
+        self.client = SocketClient(*self.target_server)
 
-
-        # Define pre-filled commands
-        pre_filled_commands = [self.commands.command_get_camera_info(),self.commands.command_take_picture()]
-        self.send_command(self.commands.command_stop_stream())
-
-
-        # Initialize UDPClient with pre-filled commands
+        # Initialize SocketClient with pre-filled commands
         # self.client.last_commands.extend(pre_filled_commands)
-        self.create_layout(pre_filled_commands)
+        self.create_layout()
 
         # Start a thread to receive UDP packets
         receive_thread = Thread(target=self.client.receive_packets)
         receive_thread.daemon = True
         receive_thread.start()
 
-    def create_layout(self, pre_filled_commands):
+    def create_layout(self):
         main_widget = QWidget()
         layout = QVBoxLayout()
         splitter = QSplitter(Qt.Horizontal)
@@ -445,7 +434,6 @@ class WifiCamHostGUI(QMainWindow):
 
         self.connect_window(right_side_layout)
         self.capture_window(right_side_layout)  # Added Capture Window
-        # self.command_input_window(right_side_layout, pre_filled_commands)
         self.log_window(right_side_layout)
 
         right_side_widget.setLayout(right_side_layout)
@@ -569,25 +557,11 @@ class WifiCamHostGUI(QMainWindow):
             list(self.IMAGE_RESOLUTION_OPTIONS.values()).index(self.image_resolution_combobox.currentText())]
             self.send_command(self.commands.command_start_streaming_mode(resolution_number))
 
-    def command_input_window(self, layout, pre_filled_commands):
-        label = QLabel("Commands:")
-        layout.addWidget(label)
-
-        # Initialize QCompleter with pre-filled commands
-        completer = QCompleter(pre_filled_commands)
-        self.command_entry = QLineEdit()
-        self.command_entry.setCompleter(completer)
-        layout.addWidget(self.command_entry)
-
-        send_button = QPushButton("Send Command")
-        send_button.clicked.connect(lambda: self.send_command(self.command_entry.text()))
-        layout.addWidget(send_button)
-
     def log_window(self, layout):
         label = QLabel("Log:")
         layout.addWidget(label)
 
-        self.client.log_content_text = QTextEdit("Check WiFi Camera Device printout for the target address.\n Example: 192.168.1.100:60000")  # Set the text edit widget in client
+        self.client.log_content_text = QTextEdit("Check WiFi Camera Device printout for the target address.\n Example: 192.168.1.1:60000")  # Set the text edit widget in client
         layout.addWidget(self.client.log_content_text)
 
         clear_button = QPushButton("Clear Log")
