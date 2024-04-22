@@ -297,14 +297,17 @@ class ArducamMegaCameraDataProcess:
 class SocketClient(QObject):
     command_receiving_signal = pyqtSignal(bytes)
 
-    def __init__(self, cam_address='192.168.1.1', cam_port=60000):
+    def __init__(self, cam_address='192.168.1.1', cam_port=60010):
         super().__init__()
         self.cam_address = cam_address
         self.cam_port = cam_port
-        self.buffer_size = 2048
+        self.buffer_size = 4096
         self.camera = ArducamMegaCameraDataProcess()
-        self.pc_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.pc_socket.bind(('0.0.0.0', 60006))
+        #self.pc_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)  
+        self.pc_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.pc_socket.bind(('0.0.0.0', 60000))
+        self.pc_socket.connect((cam_address, cam_port))
+        print("Connected to the TCP server.")
         self.log_content_text = QTextEdit()  # Placeholder for received content text edit widget
         self.command_buffer = b''  # Buffer to store the command packets
         self.in_command = False  # Flag to indicate if currently receiving a command
@@ -329,8 +332,8 @@ class SocketClient(QObject):
                 # Receive data
                 data, _ = self.pc_socket.recvfrom(self.buffer_size)
                 # Print the received content as hexadecimal
-                # received_hex = ' '.join(f'{byte:02x}' for byte in data)
-                # print(f"Received: {received_hex}")
+                received_hex = ' '.join(f'{byte:02x}' for byte in data)
+                print(f"Received: {received_hex}")
 
                 # Check if the packet starts with FF AA
                 if data.startswith(b'\xFF\xAA'):

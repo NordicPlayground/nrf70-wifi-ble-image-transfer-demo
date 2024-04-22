@@ -20,16 +20,13 @@ LOG_MODULE_REGISTER(WiFiCam, CONFIG_LOG_DEFAULT_LEVEL);
 #include <zephyr/kernel.h>
 #include <zephyr/drivers/video.h>
 #include <zephyr/drivers/video/arducam_mega.h>
-#include <zephyr/net/socket.h>
 
 #include "app_bluetooth.h"
 #include "socket_util.h"
 
-/**********External resources**************/
-extern int cam_socket;
-extern uint8_t udp_recv_buf[];
-extern struct k_msgq udp_recv_queue;
+/**********External Resources START**************/
 extern struct sockaddr_in pc_addr;
+/**********External Resources END**************/
 
 #define RESET_CAMERA 0XFF
 #define SET_PICTURE_RESOLUTION 0X01
@@ -67,10 +64,10 @@ static struct arducam_mega_info mega_info;
 enum client_type {
 	client_type_NONE,
 	client_type_BLE,
-	client_type_UDP
+	client_type_SOCKET
 };
 
-enum app_command_type {APPCMD_CAM_COMMAND, APPCMD_TAKE_PICTURE, APPCMD_START_STOP_STREAM, APPCMD_UDP_RX};
+enum app_command_type {APPCMD_CAM_COMMAND, APPCMD_TAKE_PICTURE, APPCMD_START_STOP_STREAM, APPCMD_SOCKET_RX};
 
 struct app_command_t {
 	enum app_command_type type;
@@ -87,14 +84,14 @@ struct client_state {
 	uint8_t stream_active : 1;
 };
 struct client_state client_state_ble = {0};
-struct client_state client_state_udp = {0};
+struct client_state client_state_socket = {0};
 
 static void on_timer_count_bytes_func(struct k_timer *timer);
 K_TIMER_DEFINE(m_timer_count_bytes, on_timer_count_bytes_func, NULL);
 static int counted_bytes_sent = 0;
 
 /* actucal command not count start(0x55) and stop(0xAA) codes*/
-uint8_t udp_head_and_tail[] = {0xff, 0xaa, 0x00, 0xff, 0xbb};
+uint8_t socket_head_and_tail[] = {0xff, 0xaa, 0x00, 0xff, 0xbb};
 
 const uint32_t pixel_format_table[] = {
 	VIDEO_PIX_FMT_JPEG,
@@ -124,19 +121,15 @@ static uint8_t current_resolution;
 static uint8_t target_resolution;
 static uint8_t take_picture_fmt = 0x1a;
 
-static void cam_send(const void *buf, size_t len){
-      sendto(cam_socket, buf, len, 0, (struct sockaddr *)&pc_addr,  sizeof(pc_addr));
-}
-
-void cam_to_host_command_send(uint8_t type, uint8_t *buffer, uint32_t length)
+void cam_to_pc_command_send(uint8_t type, uint8_t *buffer, uint32_t length)
 {
-	udp_head_and_tail[2] = type;
-	cam_send(&udp_head_and_tail[0], 3);
+	socket_head_and_tail[2] = type;
+	cam_send(&socket_head_and_tail, 3);
 	if(length!=0){
 		cam_send((uint8_t *)&length, 4);
 		cam_send(buffer, length);
 	}
-	cam_send(&udp_head_and_tail[3], 2);
+	cam_send(&socket_head_and_tail[3], 2);
 }
 
 int set_mega_resolution(uint8_t sfmt, enum client_type source_client)
@@ -156,12 +149,12 @@ int set_mega_resolution(uint8_t sfmt, enum client_type source_client)
 	struct video_format fmt = {.width = resolution_table[resolution][0],
 							   .height = resolution_table[resolution][1],
 							   .pixelformat = pixel_format_table[pixelformat - 1]};
-	// If the resolution has changed, and the client that initiated the change was UDP, notify the BLE client
+	// If the resolution has changed, and the client that initiated the change was socket, notify the BLE client
 	if (resolution != current_resolution) {
-		if (source_client == client_type_UDP) {
+		if (source_client == client_type_SOCKET) {
 			app_bt_send_client_status(((mega_info.camera_id == ARDUCAM_SENSOR_3MP_1 || mega_info.camera_id == ARDUCAM_SENSOR_3MP_2)) ? 1 : 2, resolution);
 		} else if (source_client == client_type_BLE) {
-			cam_to_host_command_send(0x07, &resolution, sizeof(resolution));
+			cam_to_pc_command_send(0x07, &resolution, sizeof(resolution));
 		}
 	}
 
@@ -170,7 +163,7 @@ int set_mega_resolution(uint8_t sfmt, enum client_type source_client)
 	return video_set_format(video, VIDEO_EP_OUT, &fmt);
 }
 
-void cam_send_picture_data_udp(uint8_t *data, int length)
+void cam_send_picture_data_socket(uint8_t *data, int length)
 {
 	counted_bytes_sent += length;
 	while (length >= 1024) {
@@ -247,14 +240,14 @@ void video_preview(void)
 		capture_flag = false;
 
 		client_check_start_request(&client_state_ble);
-		client_check_start_request(&client_state_udp);
+		client_check_start_request(&client_state_socket);
 
 		if (client_state_ble.stream_active) {
 			app_bt_send_picture_header(vbuf->bytesframe);
 		} 
-		if (client_state_udp.stream_active) {
-			udp_head_and_tail[2] = 0x01;
-			cam_send(&udp_head_and_tail[0], 3);
+		if (client_state_socket.stream_active) {
+			socket_head_and_tail[2] = 0x01;
+			cam_send(&socket_head_and_tail[0], 3);
 			cam_send((uint8_t *)&vbuf->bytesframe, 4);
 			target_resolution = (((current_resolution & 0x0f) << 4) | 0x01);
 			cam_send(&target_resolution, 1);
@@ -264,20 +257,20 @@ void video_preview(void)
 	if (client_state_ble.stream_active) {
 		cam_send_picture_data_ble(vbuf->buffer, vbuf->bytesused);
 	} 
-	if (client_state_udp.stream_active) {
-		cam_send_picture_data_udp(vbuf->buffer, vbuf->bytesused);
+	if (client_state_socket.stream_active) {
+		cam_send_picture_data_socket(vbuf->buffer, vbuf->bytesused);
 	}
 
 	if (f_status == VIDEO_BUF_EOF)
 	{
 		capture_flag = true;
 
-		if (client_state_udp.stream_active) {
-			cam_send(&udp_head_and_tail[3], 2);
+		if (client_state_socket.stream_active) {
+			cam_send(&socket_head_and_tail[3], 2);
 		}
 
 		client_check_stop_request(&client_state_ble);
-		client_check_stop_request(&client_state_udp);	
+		client_check_stop_request(&client_state_socket);	
 	}
 
 	err = video_enqueue(video, VIDEO_EP_OUT, vbuf);
@@ -322,7 +315,7 @@ int report_mega_info(void)
 			mega_info.gain_value_max, mega_info.gain_value_min, mega_info.enable_sharpness);
 	printk("%s", str_buf);
 	str_len = strlen(str_buf);
-	cam_to_host_command_send(0x02, str_buf, str_len);
+	cam_to_pc_command_send(0x02, str_buf, str_len);
 	return 0;
 }
 
@@ -333,17 +326,17 @@ uint8_t recv_process(uint8_t *buff)
 	{
 	case SET_PICTURE_RESOLUTION:
 		LOG_INF("camcmd: SET_PICTURE_RESOLUTION");
-		if (set_mega_resolution(buff[1], client_type_UDP) == 0)
+		if (set_mega_resolution(buff[1], client_type_SOCKET) == 0)
 		{
 			take_picture_fmt = buff[1];
 		}
 		break;
 	case SET_VIDEO_RESOLUTION:
 		LOG_INF("camcmd: SET_VIDEO_RESOLUTION");
-		if (!client_state_udp.stream_active)
+		if (!client_state_socket.stream_active)
 		{
-			set_mega_resolution(buff[1] | 0x10, client_type_UDP);
-			client_request_stream_start_stop(&client_state_udp, true);
+			set_mega_resolution(buff[1] | 0x10, client_type_SOCKET);
+			client_request_stream_start_stop(&client_state_socket, true);
 		}
 		break;
 	case SET_BRIGHTNESS:
@@ -388,13 +381,13 @@ uint8_t recv_process(uint8_t *buff)
 		break;
 	case TAKE_PICTURE:
 		LOG_INF("Take picture");
-		client_request_single_capture(&client_state_udp);
+		client_request_single_capture(&client_state_socket);
 		break;
 	case STOP_STREAM:
-		if (client_state_udp.stream_active)
+		if (client_state_socket.stream_active)
 		{
 			LOG_INF("Stop video stream");
-			client_request_stream_start_stop(&client_state_udp, false);
+			client_request_stream_start_stop(&client_state_socket, false);
 		}
 		break;
 	case RESET_CAMERA:
@@ -424,7 +417,7 @@ void app_bt_connected_callback(void)
 {	
 	LOG_INF("Bluetooth connection established");
 	//cam_send command 0x08 to inform WiFi Host BLE client is connected.
-	cam_to_host_command_send(0x08, NULL,0);
+	cam_to_pc_command_send(0x08, NULL,0);
 }
 
 void app_bt_ready_callback(void)
@@ -442,7 +435,7 @@ void app_bt_disconnected_callback(void)
 	client_state_ble.req_stream_stop = 0;
 	client_state_ble.stream_active = 0;
 	//cam_send command 0x09 to inform WiFi Host BLE client is disconnected.
-	cam_to_host_command_send(0x09, NULL,0);
+	cam_to_pc_command_send(0x09, NULL,0);
 }
 
 void app_bt_take_picture_callback(void)
@@ -488,12 +481,12 @@ static void on_timer_count_bytes_func(struct k_timer *timer)
 	}
 }
 
-void udp_rx_callback(uint8_t *data, uint16_t len)
+void socket_rx_callback(uint8_t *data, uint16_t len)
 {
-	static struct app_command_t app_cmd_udp = {.type = APPCMD_UDP_RX};
-	LOG_DBG("UDP RX callback");
-	memcpy(app_cmd_udp.data, data, len);
-	register_app_command(&app_cmd_udp);
+	static struct app_command_t app_cmd_socket = {.type = APPCMD_SOCKET_RX};
+	LOG_DBG("SOCKET RX callback");
+	memcpy(app_cmd_socket.data, data, len);
+	register_app_command(&app_cmd_socket);
 }
 
 int main(void)
@@ -527,7 +520,7 @@ int main(void)
 		return -1;
 	}
 
-	net_util_set_callback(udp_rx_callback);
+	net_util_set_callback(socket_rx_callback);
 
 	/* Alloc video buffers and enqueue for capture */
 	for (int i = 0; i < ARRAY_SIZE(buffers); i++)
@@ -574,18 +567,18 @@ int main(void)
 						client_request_stream_start_stop(&client_state_ble, false);
 					}
 					break;
-				case APPCMD_UDP_RX:
-					uint8_t udp_cmd_buf[UDP_COMMAND_MAX_SIZE - 2];
-					ret = process_udp_rx_buffer(new_command.data, udp_cmd_buf);
+				case APPCMD_SOCKET_RX:
+					uint8_t socket_cmd_buf[CAM_COMMAND_MAX_SIZE - 2];
+					ret = process_socket_rx_buffer(new_command.data, socket_cmd_buf);
 					if (ret > 0)
 					{
 						LOG_INF("Valid command received. Length:%d", ret);
-						LOG_HEXDUMP_INF(udp_cmd_buf, ret, "Data: ");
-						recv_process(udp_cmd_buf);
+						LOG_HEXDUMP_INF(socket_cmd_buf, ret, "Data: ");
+						recv_process(socket_cmd_buf);
 					}
 					else
 					{
-						LOG_INF("Invalid UDP command received");
+						LOG_INF("Invalid SOCKET command received");
 					}
 					break;
 			}

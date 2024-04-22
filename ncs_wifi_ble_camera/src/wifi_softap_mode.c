@@ -16,8 +16,9 @@ LOG_MODULE_REGISTER(wifi_softap_mode, CONFIG_LOG_DEFAULT_LEVEL);
 
 #define WIFI_SAP_MGMT_EVENTS (NET_EVENT_WIFI_AP_ENABLE_RESULT)
 
-/**********External resources**************/
+/**********External Resources START**************/
 extern struct k_sem wifi_net_ready;
+/**********External Resources END**************/
 
 static struct net_mgmt_event_callback wifi_sap_mgmt_cb;
 
@@ -193,7 +194,7 @@ static int __wifi_args_to_params(struct wifi_connect_req_params *params)
 	return 0;
 }
 
-static int cmd_wifi_status(void)
+int cmd_wifi_status(void)
 {
 	struct net_if *iface;
 	struct wifi_iface_status status = { 0 };
@@ -331,6 +332,8 @@ int wifi_softap_mode_ready(void)
 	configure_dhcp_cam_server();
 	wifi_softap_enable();
 	cmd_wifi_status();
+	LOG_INF("\r\n\r\nRunning on WiFi SoftAP mode.\r\nPlease connect PC WiFi network to SSID 'WiFi_Cam_Demo_AP' and password 'nRF7002DK'.\r\n");
 	k_sem_take(&wifi_net_ready, K_FOREVER);
+	LOG_INF("\r\n\r\nWiFi Camera is ready on nRF7002DK. Run WiFICamHost GUI script, then copy and paste '192.168.1.1' in Target WiFi Camera Address.\r\n");
 	return 0;
 }

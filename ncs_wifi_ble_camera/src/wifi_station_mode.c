@@ -37,49 +37,18 @@ LOG_MODULE_REGISTER(wifi_station_mode, CONFIG_LOG_DEFAULT_LEVEL);
 #define L2_EVENT_MASK (NET_EVENT_WIFI_CONNECT_RESULT | NET_EVENT_WIFI_DISCONNECT_RESULT)
 #define L3_EVENT_MASK NET_EVENT_IPV4_DHCP_BOUND
 
-/**********External resources**************/
+/**********External Resources START**************/
 extern struct k_sem wifi_net_ready;
-//extern int cmd_wifi_status(void);
-#define cam_port 60000 
+extern int cmd_wifi_status(void);
+/**********External Resources END**************/
 
+#define cam_port 60000
 /* Declare the callback structure for Wi-Fi events */
 static struct net_mgmt_event_callback wifi_mgmt_cb;
 static struct net_mgmt_event_callback net_mgmt_cb;
 
 /* Define the boolean wifi_connected and the semaphore wifi_net_ready */
 static bool wifi_connected;
-
-static int cmd_wifi_status(void)
-{
-	struct net_if *iface = net_if_get_default();
-	struct wifi_iface_status status = {0};
-
-	if (net_mgmt(NET_REQUEST_WIFI_IFACE_STATUS, iface, &status,
-				 sizeof(struct wifi_iface_status)))
-	{
-		LOG_INF("Status request failed");
-
-		return -ENOEXEC;
-	}
-
-	LOG_INF("==================");
-	LOG_INF("WiFi State: %s", wifi_state_txt(status.state));
-
-	if (status.state >= WIFI_STATE_ASSOCIATED)
-	{
-		LOG_INF("Interface Mode: %s",
-				wifi_mode_txt(status.iface_mode));
-		LOG_INF("Link Mode: %s",
-				wifi_link_mode_txt(status.link_mode));
-		LOG_INF("SSID: %-32s", status.ssid);
-		LOG_INF("Band: %s", wifi_band_txt(status.band));
-		LOG_INF("Channel: %d", status.channel);
-		LOG_INF("Security: %s", wifi_security_txt(status.security));
-		LOG_INF("MFP: %s", wifi_mfp_txt(status.mfp));
-		LOG_INF("RSSI: %d", status.rssi);
-	}
-	return 0;
-}
 
 static void wifi_mgmt_event_handler(struct net_mgmt_event_callback *cb,
 									uint32_t mgmt_event, struct net_if *iface)
@@ -116,8 +85,7 @@ static void on_net_event_dhcp_bound(struct net_mgmt_event_callback *cb)
 	const struct in_addr *addr = &dhcpv4->requested_ip;
 	char dhcp_info[128];
 	net_addr_ntop(AF_INET, addr, dhcp_info, sizeof(dhcp_info));
-
-	LOG_INF("WiFi Camera Server is ready on nRF7002DK, copy and paste %s:%d in Target WiFi Camera Address window on WiFi Camera Host.", dhcp_info, cam_port);
+	LOG_INF("\r\n\r\nWiFi Camera is ready on nRF7002DK. Run WiFICamHost GUI script, then copy and paste %s, in Target WiFi Camera Address window on WiFi Camera Host.\r\n", dhcp_info);
 }
 
 /* Define the callback function for network events */
@@ -199,7 +167,7 @@ int wifi_station_mode_ready(void)
 		return ENOEXEC;
 	}
 #endif
-
+	LOG_INF("\r\n\r\nRunning on WiFi Station mode.\r\nPlease connect to router with 'wifi_cred' commands, use 'wifi_cred help' to get help.\r\n");
 	k_sem_take(&wifi_net_ready, K_FOREVER);
 
 	return 0;
