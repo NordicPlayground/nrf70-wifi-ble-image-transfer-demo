@@ -92,4 +92,10 @@ config SOFTAP_SAMPLE_MAX_STATIONS
 	default 1
 	help
 	  Set the maximum number of stations allowed to connect to the SoftAP.
+
+config SAMPLE_SCOKET_TCP
+	bool "Use TCP socket for data transmission"
+	default y
+	help
+	  Set socket for data transmission, y to TCP, n to UDP.
 endmenu

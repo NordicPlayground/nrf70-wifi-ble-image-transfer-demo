@@ -31,9 +31,8 @@ LOG_MODULE_REGISTER(socket_util, CONFIG_LOG_DEFAULT_LEVEL);
 /* Same as COMMAND_MAX_SIZE*/
 #define BUFFER_MAX_SIZE 6
 
-#define pc_port  60000
-#define cam_udp_port 60010 // use for either udp or tcp server
-#define cam_port 60010
+//#define pc_port  60000
+#define cam_port 60010 // use for either udp or tcp server
 
 
 /**********External Resources START**************/
@@ -41,13 +40,13 @@ extern int wifi_softap_mode_ready(void);
 extern int wifi_station_mode_ready(void);
 /**********External Resources END**************/
 
-int cam_socket;
-int pc_socket;
-int cam_udp_socket;
-int cam_tcp_server_socket;
-struct sockaddr_in cam_udp_addr;
-struct sockaddr_in cam_tcp_server_addr;
+int udp_socket;
+int tcp_server_listen_fd;
+int tcp_server_socket;
+struct sockaddr_in cam_addr;
+bool socket_connected=false;
 
+char pc_addr_str[32];
 struct sockaddr_in pc_addr;
 socklen_t pc_addr_len=sizeof(pc_addr);
 
@@ -60,26 +59,14 @@ K_MSGQ_DEFINE(socket_recv_queue, sizeof(socket_recv_buf), 1, 4);
 
 static net_util_socket_rx_callback_t socket_rx_cb = 0; 
 
-void cam_send(const void *buf, size_t len){
-      //sendto(cam_socket, buf, len, 0, (struct sockaddr *)&pc_addr,  sizeof(pc_addr));
-	  if (send(pc_socket, buf, len, 0) == -1) {
-            perror("Sending failed");
-            close(cam_socket);
-			close(pc_socket);
-			FATAL_ERROR();
-			return;
-        }
-	  //LOG_HEXDUMP_INF(buf, len, "SocektSend");
-}
-
 void net_util_set_callback(net_util_socket_rx_callback_t socket_rx_callback)
 {
 	socket_rx_cb = socket_rx_callback;
-
 	// If any messages are waiting in the queue, forward them immediately
 	uint8_t buf[6];
 	while (k_msgq_get(&socket_recv_queue, buf, K_NO_WAIT) == 0) {
 		socket_rx_cb(buf, 6);
+		LOG_HEXDUMP_INF(buf, 6, "socket_rx_cb");
 	}
 }
 
@@ -122,22 +109,55 @@ static void button_handler(uint32_t button_state, uint32_t has_changed)
 	uint32_t buttons = button_state & has_changed;
 	if (buttons & DK_BTN1_MSK) {
 		wifi_mode = WIFI_STATION_MODE;
+	}else if (buttons & DK_BTN2_MSK){
+		close(tcp_server_listen_fd);
+		close(tcp_server_socket);
 	}
+}
+
+void cam_send(const void *buf, size_t len){
+		#if defined(CONFIG_SAMPLE_SCOKET_TCP)
+			if (send(tcp_server_socket, buf, len, 0) == -1) {
+				perror("Sending failed");
+				close(tcp_server_socket);
+				FATAL_ERROR();
+				return;
+			}
+		#else
+			sendto(udp_socket, buf, len, 0, (struct sockaddr *)&pc_addr,  sizeof(pc_addr));
+		#endif
+}
+
+void handle_client(int server_socket) {
+		ssize_t bytes_recived;
+		
+		#if defined(CONFIG_SAMPLE_SCOKET_TCP)
+			while((bytes_recived = recv(server_socket, socket_recv_buf, sizeof(socket_recv_buf),0))>0){
+				trigger_socket_rx_callback_if_set(socket_recv_buf);
+			}
+			if (bytes_recived == -1) {
+				LOG_ERR("Receiving failed");
+			} else if (bytes_recived == 0) {
+				LOG_INF("Client disconnected.\n");
+			}
+		#else
+			while((bytes_recived = recvfrom(server_socket, socket_recv_buf, sizeof(socket_recv_buf), 0, (struct sockaddr *)&pc_addr, &pc_addr_len))>0){
+				trigger_socket_rx_callback_if_set(socket_recv_buf);
+			}
+			if (bytes_recived == -1) {
+				LOG_ERR("Receiving failed");
+			} else if (bytes_recived == 0) {
+				LOG_INF("Client disconnected.\n");
+        	}
+		#endif
+		close(server_socket);
 }
 
 /* Thread to setup WiFi, Network, Sockets step by step */
 static void wifi_net_sockets(void)
 {
 	int ret;
-	char pc_addr_str[32];
-	
-	cam_udp_addr.sin_family = AF_INET;
-	cam_udp_addr.sin_addr.s_addr = htonl(INADDR_ANY);
-	cam_udp_addr.sin_port = htons(cam_udp_port);
-
-	cam_tcp_server_addr.sin_family = AF_INET;
-	cam_tcp_server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
-	cam_tcp_server_addr.sin_port = htons(cam_port);
+	ssize_t bytes_recived;
 
 	k_sem_init(&wifi_net_ready, 0, 1);
 
@@ -149,7 +169,6 @@ static void wifi_net_sockets(void)
 	{
 		LOG_ERR("Failed to initialize the LED library");
 	}
-	
 	LOG_INF("\r\n\r\nPress Button1 in THREE seconds to change WiFi from softAP mode to Station mode.\r\n");
 	k_sleep(K_SECONDS(3));
 
@@ -166,134 +185,93 @@ static void wifi_net_sockets(void)
 		return;
 	}
 
-	/*************TCP Socket START**************/
-	cam_tcp_server_socket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-	if (cam_tcp_server_socket < 0)
-	{
-		LOG_ERR("Failed to create socket: %d", -errno);
-		FATAL_ERROR();
-		return;
-	}
-    
-	ret = bind(cam_tcp_server_socket, (struct sockaddr *)&cam_tcp_server_addr, sizeof(cam_tcp_server_addr));
-	if (ret < 0)
-	{
-		LOG_ERR("bind, error: %d", -errno);
-		FATAL_ERROR();
-		return;
-	}
+	cam_addr.sin_family = AF_INET;
+	cam_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+	cam_addr.sin_port = htons(cam_port);
 
-	ret = listen(cam_tcp_server_socket, 5);
-	if (ret < 0)
-	{
-		LOG_ERR("listen, error: %d", -errno);
-		FATAL_ERROR();
-		return;
-	}
-
-	pc_socket = accept(cam_tcp_server_socket, (struct sockaddr *)&pc_addr, &pc_addr_len);
-	if (pc_socket < 0)
-	{
-		LOG_ERR("accept, error: %d", -errno);
-		FATAL_ERROR();
-		return;
-	}
-
-	// ret = close(cam_tcp_server_socket);
-	// if (ret < 0)
-	// {
-	// 	LOG_ERR("close, error: %d", -errno);
-	// 	FATAL_ERROR();
-	// 	return;
-	// }
-	/*************TCP Socket END**************/
-
-	/*************UDP Socket START**************/
-	// cam_udp_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-	// if (cam_udp_socket < 0)
-	// {
-	// 	LOG_ERR("Failed to create socket: %d", -errno);
-	// 	FATAL_ERROR();
-	// 	return;
-	// }
-	// ret = bind(cam_udp_socket, (struct sockaddr *)&cam_udp_addr, sizeof(cam_udp_addr));
-	// if (ret < 0)
-	// {
-	// 	LOG_ERR("bind, error: %d", -errno);
-	// 	FATAL_ERROR();
-	// 	return;
-	// }
-	// ret = recvfrom(cam_udp_socket, socket_recv_buf, sizeof(socket_recv_buf), 0, (struct sockaddr *)&pc_addr, &pc_addr_len);
-	// if (ret < 0)
-	// {
-	// 	LOG_ERR("recvfrom, error: %d", -errno);
-	// 	FATAL_ERROR();
-	// 	return;
-	// }
-	/*************UDP Socket END**************/
-	inet_ntop(pc_addr.sin_family, &pc_addr.sin_addr, pc_addr_str, sizeof(pc_addr_str));
-	LOG_INF("Connect with PC through WiFi, PC IPAddr = %s, Port = %d\n", pc_addr_str, ntohs(pc_addr.sin_port));
-
-	LOG_INF("Socket is ready!");
-	cam_socket = cam_tcp_server_socket;
-
-// #define BUFFER_SIZE 1024
-// char buffer[BUFFER_SIZE];
-// 	 // Receive and send data
-//     while (1) {
-//         //int bytes_received = recvfrom(pc_socket, buffer, BUFFER_SIZE, (struct sockaddr *)&pc_addr, &pc_addr_len);
-// 		int bytes_received = recv(pc_socket, buffer, BUFFER_SIZE,0);
-//         if (bytes_received == -1) {
-//             LOG_ERR("Receiving failed");
-//             close(cam_socket);
-// 			close(pc_socket);
-// 			FATAL_ERROR();
-// 			return;
-//         } else if (bytes_received == 0) {
-//             LOG_INF("Client disconnected.\n");
-//             break;
-//         }
-//         //buffer[bytes_received] = '\0';
-// 		LOG_INF("bytes_received:%d", bytes_received);
-// 		LOG_HEXDUMP_INF(buffer, sizeof(bytes_received), "hexdump");
-
-
-//         // Echo back to client
-// 		//sendto(cam_socket, buf, len, 0, (struct sockaddr *)&pc_addr,  sizeof(pc_addr));
-//         if (send(pc_socket, buffer, bytes_received, 0) == -1) {
-//             perror("Sending failed");
-//             close(cam_socket);
-// 			close(pc_socket);
-// 			FATAL_ERROR();
-// 			return;
-//         }
-//     }
-
-	trigger_socket_rx_callback_if_set(socket_recv_buf);
-
-	while (1)
-	{
-		//ret = recvfrom(cam_udp_socket, socket_recv_buf, sizeof(socket_recv_buf), 0, (struct sockaddr *)&pc_addr, &pc_addr_len)
-		// if (ret < 0)
-		// {
-		// 	LOG_ERR("[%d] Cannot receive message (%d)", ret,
-		// 			-errno);
-		// 	return;
-		// }
-		int bytes_received = recv(pc_socket, socket_recv_buf, sizeof(socket_recv_buf),0);
-        if (bytes_received == -1) {
-            LOG_ERR("Receiving failed");
-            close(cam_socket);
-			close(pc_socket);
+	#if defined(CONFIG_SAMPLE_SCOKET_TCP)
+		tcp_server_listen_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+		
+		if (tcp_server_listen_fd < 0)
+		{
+			LOG_ERR("Failed to create socket: %d", -errno);
 			FATAL_ERROR();
 			return;
-        } else if (bytes_received == 0) {
-            LOG_INF("Client disconnected.\n");
-            break;
-        }
-		trigger_socket_rx_callback_if_set(socket_recv_buf);
-		k_yield();
-	}
+		}
+		
+		ret = bind(tcp_server_listen_fd, (struct sockaddr *)&cam_addr, sizeof(cam_addr));
+		if (ret < 0)
+		{
+			LOG_ERR("bind, error: %d", -errno);
+			FATAL_ERROR();
+			return;
+		}
+
+		ret = listen(tcp_server_listen_fd, 5);
+		if (ret < 0)
+		{
+			LOG_ERR("listen, error: %d", -errno);
+			FATAL_ERROR();
+			return;
+		}
+
+		while(1){
+			tcp_server_socket = accept(tcp_server_listen_fd, (struct sockaddr *)&pc_addr, &pc_addr_len);
+			if (tcp_server_socket < 0)
+			{
+				LOG_ERR("accept, error: %d", -errno);
+				FATAL_ERROR();
+				return;
+			}
+			LOG_INF("Accepted connection from client\n");
+			inet_ntop(pc_addr.sin_family, &pc_addr.sin_addr, pc_addr_str, sizeof(pc_addr_str));
+			LOG_INF("Connect with PC through WiFi, PC IPAddr = %s, Port = %d\n", pc_addr_str, ntohs(pc_addr.sin_port));
+			// Handle the client connection
+			while((bytes_recived = recv(tcp_server_socket, socket_recv_buf, sizeof(socket_recv_buf),0))>0){
+				trigger_socket_rx_callback_if_set(socket_recv_buf);
+			}
+			if (bytes_recived == -1) {
+				LOG_ERR("Receiving failed");
+			} else if (bytes_recived == 0) {
+				LOG_INF("Client disconnected.\n");
+			}
+			close(tcp_server_socket);
+		}
+		// Close the server socket (should be unreachable  as the server runs indefinitely)
+		close(tcp_server_listen_fd);
+	#else
+		udp_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+		if (udp_socket < 0)
+		{
+			LOG_ERR("Failed to create socket: %d", -errno);
+			FATAL_ERROR();
+			return;
+		}
+		ret = bind(udp_socket, (struct sockaddr *)&cam_addr, sizeof(cam_addr));
+		if (ret < 0)
+		{
+			LOG_ERR("bind, error: %d", -errno);
+			FATAL_ERROR();
+			return;
+		}
+		while((bytes_recived = recvfrom(udp_socket, socket_recv_buf, sizeof(socket_recv_buf), 0, (struct sockaddr *)&pc_addr, &pc_addr_len))>0){
+			if(socket_connected == false){
+				inet_ntop(pc_addr.sin_family, &pc_addr.sin_addr, pc_addr_str, sizeof(pc_addr_str));
+				LOG_INF("Connect with PC through WiFi, PC IPAddr = %s, Port = %d\n", pc_addr_str, ntohs(pc_addr.sin_port));
+				socket_connected=true;
+			}
+			trigger_socket_rx_callback_if_set(socket_recv_buf);
+		}
+		if (bytes_recived == -1) {
+			LOG_ERR("Receiving failed");
+		} else if (bytes_recived == 0) {
+			LOG_INF("Client disconnected.\n");
+		}
+
+		close(udp_socket);
+		socket_connected=false;
+
+	#endif
 }
 
 K_THREAD_DEFINE(wifi_net_sockets_id, STACKSIZE, wifi_net_sockets, NULL, NULL, NULL,

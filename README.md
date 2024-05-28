@@ -32,27 +32,21 @@ Here is the pin connection with the Arducam Mega SPI Camera marked on the nRF700
 
 
 # Firmware Preparation
-
 ---
 
-## How the firmware works
+## How firmware works
 
-Two sockets are used by the UDP Server(WiFiCam + nRF7002DK).
+The fimware running on Camera Device(nRF7002DK+ArduCAM Mega) can connect with Wi-Fi Camera host and BLE Camear App at same.
+For Wi-Fi connection, it can use either UDP and TCP socket. 
 
-UDP Client(WiFiCamHost+PC):50000 <->> UDP Server(WiFiCam+nRF7002DK):60000 = socket_recv
+## Install nRF Connect SDK(NCS) version 2.6.1
 
-UDP Client(WiFiCamHost+PC):50005 <<-> UDP Server(WiFiCam+nRF7002DK):60006 = socket_send
-
-socket_recv is built by the UDP server to wait for the UDP client to connect to its address, then the server can know the client address. The server builds a new socket_send to send WiFiCam data like camera info, and video frame to the client. The previous socket_recv is used to receive commands from the UDP client. 
-
-## Install nRF Connect SDK(NCS) version 2.5.2
-
-Please refer to https://developer.nordicsemi.com/nRF_Connect_SDK/doc/2.5.2/nrf/installation.html
+Please refer to https://developer.nordicsemi.com/nRF_Connect_SDK/doc/2.6.1/nrf/installation.html
 
 ## Cherry pick ArduCAM Mega Zephyr driver
 Open a TERMINAL with nRF Connect environment at VS code, and run the following commands.
 ```
-cd c:/ncs/v2.5.2/zephyr
+cd c:/ncs/v2.6.1/zephyr
 git remote add arducam https://github.com/ArduCAM/zephyr.git 
 git fetch arducam
 From https://github.com/ArduCAM/zephyr
@@ -62,10 +56,10 @@ From https://github.com/ArduCAM/zephyr
  * [new branch]              main                     -> arducam/main
  * [new branch]              update_video_controls    -> arducam/update_video_controls
 git log arducam/add_arducam_mega_driver
-git cherry-pick ce6334
-git cherry-pick 8cb926
-git cherry-pick 2db7d6
-git cherry-pick 37d1b7
+git cherry-pick 1164c589c5b
+git cherry-pick c78faada64f 
+git cherry-pick 1e96928018c 
+git cherry-pick 60de7c4462e
 git remote remove arducam
 ```
 ## Download this repository

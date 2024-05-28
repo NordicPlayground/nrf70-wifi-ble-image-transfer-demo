@@ -118,7 +118,6 @@ const uint16_t resolution_table[][2] = {
 const uint8_t resolution_num = sizeof(resolution_table) / 4;
 
 static uint8_t current_resolution;
-static uint8_t target_resolution;
 static uint8_t take_picture_fmt = 0x1a;
 
 void cam_to_pc_command_send(uint8_t type, uint8_t *buffer, uint32_t length)
@@ -249,8 +248,7 @@ void video_preview(void)
 			socket_head_and_tail[2] = 0x01;
 			cam_send(&socket_head_and_tail[0], 3);
 			cam_send((uint8_t *)&vbuf->bytesframe, 4);
-			target_resolution = (((current_resolution & 0x0f) << 4) | 0x01);
-			cam_send(&target_resolution, 1);
+			LOG_INF("bytesframe:%d",vbuf->bytesframe);
 		}
 	}
 
@@ -259,6 +257,7 @@ void video_preview(void)
 	} 
 	if (client_state_socket.stream_active) {
 		cam_send_picture_data_socket(vbuf->buffer, vbuf->bytesused);
+		LOG_INF("bytesused:%d",vbuf->bytesused);
 	}
 
 	if (f_status == VIDEO_BUF_EOF)
@@ -460,8 +459,6 @@ void app_bt_change_resolution_callback(uint8_t resolution)
 		 .cam_cmd = SET_PICTURE_RESOLUTION};
 	cmd_take_picture.data[0] = 0x10 | (resolution & 0xF);
 	register_app_command(&cmd_take_picture);
-
-	//current_resolution = resolution;
 }
 
 const struct app_bt_cb app_bt_callbacks = {
@@ -578,7 +575,7 @@ int main(void)
 					}
 					else
 					{
-						LOG_INF("Invalid SOCKET command received");
+						LOG_INF("Invalid SOCKET command received:%d", ret);
 					}
 					break;
 			}

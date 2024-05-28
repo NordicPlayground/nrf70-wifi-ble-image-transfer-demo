@@ -19,6 +19,7 @@ LOG_MODULE_REGISTER(wifi_softap_mode, CONFIG_LOG_DEFAULT_LEVEL);
 /**********External Resources START**************/
 extern struct k_sem wifi_net_ready;
 /**********External Resources END**************/
+int wifi_softap_mode_ready(void);
 
 static struct net_mgmt_event_callback wifi_sap_mgmt_cb;
 
@@ -102,6 +103,7 @@ static void handle_wifi_ap_sta_connected(struct net_mgmt_event_callback *cb)
 	wifi_ap_stations_unlocked();
 	k_mutex_unlock(&wifi_ap_sta_list_lock);
 	dk_set_led_on(DK_LED1);
+	LOG_INF("\r\n\r\nWiFi Camera is ready on nRF7002DK. Run WiFICamHost GUI script, then copy and paste '192.168.1.1' in Target WiFi Camera Address.\r\n");
     k_sem_give(&wifi_net_ready);
 
 }
@@ -138,6 +140,9 @@ static void handle_wifi_ap_sta_disconnected(struct net_mgmt_event_callback *cb)
 	k_mutex_unlock(&wifi_ap_sta_list_lock);
 	dk_set_led_off(DK_LED1);
 	k_sem_reset(&wifi_net_ready);
+	LOG_INF("\r\nWi-Fi Camera SofAP is disconnected. Ready for new Wi-Fi connection.\r\n");
+	LOG_INF("\r\n\r\nRunning on WiFi SoftAP mode.\r\nPlease connect PC WiFi network to SSID 'WiFi_Cam_Demo_AP' and password 'nRF7002DK'.\r\n");
+
 }
 
 static void wifi_mgmt_event_handler(struct net_mgmt_event_callback *cb,
@@ -334,6 +339,5 @@ int wifi_softap_mode_ready(void)
 	cmd_wifi_status();
 	LOG_INF("\r\n\r\nRunning on WiFi SoftAP mode.\r\nPlease connect PC WiFi network to SSID 'WiFi_Cam_Demo_AP' and password 'nRF7002DK'.\r\n");
 	k_sem_take(&wifi_net_ready, K_FOREVER);
-	LOG_INF("\r\n\r\nWiFi Camera is ready on nRF7002DK. Run WiFICamHost GUI script, then copy and paste '192.168.1.1' in Target WiFi Camera Address.\r\n");
 	return 0;
 }

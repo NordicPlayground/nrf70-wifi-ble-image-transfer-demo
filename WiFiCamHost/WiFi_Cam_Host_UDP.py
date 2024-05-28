@@ -4,7 +4,6 @@ import configparser
 import time
 from io import BytesIO
 from PIL import Image
-from threading import Thread
 from PyQt5.QtCore import *
 from PyQt5.QtGui import *
 from PyQt5.QtWidgets import *
@@ -175,8 +174,7 @@ class ArducamMegaCameraDataProcess:
             if command_type == b'\x01':
                 # Capture Video command
                 bytesframe = int.from_bytes(command[3:7], byteorder='little')
-                resolution = command[7:8]
-                frame = command[8:8+bytesframe]
+                frame = command[7:7+bytesframe]
                 return self.process_capture_command(bytesframe, frame)
             elif command_type == b'\x02':
                 # Camera Info command
@@ -226,7 +224,7 @@ class ArducamMegaCameraDataProcess:
 
         try:
             img = Image.open(BytesIO(frame))
-            img.save("img.temp", "JPEG")
+            img.save("img.jpg", "JPEG")
         except Exception as e:
             error_message = f"Error occurred while processing image: {str(e)}"
         return f"FrameSize: {bytesframe} Bytes\nFrames-per-second: {fps:.2f}\nThroughput: {bytesframe*8*fps/1024:.2f} kbps\n"
@@ -254,9 +252,10 @@ class ArducamMegaCameraDataProcess:
                 break
 
         # Update the image_resolution_combobox
-        main_window.image_resolution_combobox.clear()
-        main_window.image_resolution_combobox.addItems(list(main_window.IMAGE_RESOLUTION_OPTIONS.values()))
-        self.is_res_updated==True
+        image_resolution_options = list(main_window.IMAGE_RESOLUTION_OPTIONS.items())
+        last_item = image_resolution_options[-1][1]
+        main_window.image_resolution_combobox.addItem(last_item)
+        self.is_res_updated=True
 
 
     def process_version_command(self, payload):
@@ -296,73 +295,92 @@ class ArducamMegaCameraDataProcess:
 
 class SocketClient(QObject):
     command_receiving_signal = pyqtSignal(bytes)
+    num_signal = pyqtSignal(int)
+    stop_signal = pyqtSignal()
 
     def __init__(self, cam_address='192.168.1.1', cam_port=60010):
+        #super(SocketClient, self).__init__()
         super().__init__()
         self.cam_address = cam_address
         self.cam_port = cam_port
         self.buffer_size = 4096
-        self.camera = ArducamMegaCameraDataProcess()
-        #self.pc_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)  
-        self.pc_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.pc_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        # self.pc_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.pc_socket.bind(('0.0.0.0', 60000))
         self.pc_socket.connect((cam_address, cam_port))
-        print("Connected to the TCP server.")
-        self.log_content_text = QTextEdit()  # Placeholder for received content text edit widget
+        print("Connected to the Camera.")
+        print("SocketClient init")
         self.command_buffer = b''  # Buffer to store the command packets
         self.in_command = False  # Flag to indicate if currently receiving a command
+        self.running = True
 
-    def close_sockets(self):
-        self.pc_socket.close()
+        # Connect the stop signal to the method to handle it
+        self.stop_signal.connect(self.stop)
+
+    def __del__(self):
+        print("SocketClient del")
+        #self.pc_socket.close()
 
     def send_command(self, command_str):
         try:
+            print("SocketClient send_command")
             # Convert the command string to bytes
             command_bytes = bytes.fromhex(command_str)
-
             # Send the command bytes to the server
             self.pc_socket.sendto(command_bytes, (self.cam_address, self.cam_port))
-
         except Exception as e:
-            QMessageBox.critical(None, "Error", str(e))
+            QMessageBox.critical(None, "Error", "Fail to send command")
 
-    def receive_packets(self):
+    def run(self):
         try:
-            while True:
-                # Receive data
-                data, _ = self.pc_socket.recvfrom(self.buffer_size)
-                # Print the received content as hexadecimal
-                received_hex = ' '.join(f'{byte:02x}' for byte in data)
-                print(f"Received: {received_hex}")
+            print("SocketClient run")
+            total_bytes_received=0
+            while self.running:
+                # Use select to check for incoming data with a timeout to allow for graceful stopping
+                # ready = select.select([self.pc_socket], [], [], 1.0)
+                if self.pc_socket:
+                    data, _ = self.pc_socket.recvfrom(self.buffer_size) #Max 1024 for UDP
+                    bytes_received = len(data)
+                    total_bytes_received += bytes_received
+                    # Print the received content as hexadecimal
+                    received_hex = ' '.join(f'{byte:02x}' for byte in data)
+                    print(f"Received({bytes_received}): {received_hex}")
+                    print(f"Total bytes received: {total_bytes_received}")
 
-                # Check if the packet starts with FF AA
-                if data.startswith(b'\xFF\xAA'):
-                    self.command_buffer = b''
-                    # Set flag to indicate receiving a command
-                    self.in_command = True
+                    # Check if the packet starts with FF AA
+                    if data.startswith(b'\xFF\xAA'):
+                        self.command_buffer = b''
+                        # Set flag to indicate receiving a command
+                        self.in_command = True
+                        # Append the packet to the command buffer
+                        self.command_buffer += data
 
-                    # Append the packet to the command buffer
-                    self.command_buffer += data
+                    # Check if the packet ends with FF BB and in a command
+                    elif data.endswith(b'\xFF\xBB') and self.in_command:
+                        # Append the packet to the command buffer
+                        self.command_buffer += data
+                        # Emit signal with the complete command
+                        self.command_receiving_signal.emit(self.command_buffer)
+                        # Reset command buffer and flag
+                        self.command_buffer = b''
+                        self.in_command = False
+                        total_bytes_received=0
 
-                # Check if the packet ends with FF BB and in a command
-                elif data.endswith(b'\xFF\xBB') and self.in_command:
-                    # Append the packet to the command buffer
-                    self.command_buffer += data
-
-                    # Emit signal with the complete command
-                    self.command_receiving_signal.emit(self.command_buffer)
-
-                    # Reset command buffer and flag
-                    self.command_buffer = b''
-                    self.in_command = False
-
-                # Check if the packet is a command packet and in a command
-                elif self.in_command:
-                    # Append the packet to the command buffer
-                    self.command_buffer += data
+                    # Check if the packet is a command packet and in a command
+                    elif self.in_command:
+                        # Append the packet to the command buffer
+                        self.command_buffer += data
+                    else:
+                        total_bytes_received=0
 
         except Exception as e:
-            QMessageBox.critical(None, "Error", str(e))
+            if self.running:
+                QMessageBox.critical(None, "Error", "Fail to receive packets!")
+
+    def stop(self):
+        print("SocketClient stop")
+        self.running = False
+        self.pc_socket.close()
 
 
 class WifiCamHostGUI(QMainWindow):
@@ -387,31 +405,28 @@ class WifiCamHostGUI(QMainWindow):
         2: "RGB",
         3: "YUV",
     }
-    
+
     def __init__(self):
         super().__init__()
         self.resize(1200, 900)
         self.setWindowTitle("WiFi Camera Host")
         self.setWindowIcon(QIcon("icon.png"))
-        self.commands=CommandsToCamera()
+        self.commands = CommandsToCamera()
 
         self.config = configparser.ConfigParser()
-
         # Load config
         self.config.read('config.ini')
-        target_ip = self.config['DEFAULT']['TargetIP'] 
+        target_ip = self.config['DEFAULT']['TargetIP']
         target_port = int(self.config['DEFAULT']['TargetPort'])
         self.target_server = (target_ip, target_port)
-        self.client = SocketClient(*self.target_server)
+        
+        # Initialize SocketClient and socket_thread
+        self.client = None
+        self.socket_thread = None
 
-        # Initialize SocketClient with pre-filled commands
-        # self.client.last_commands.extend(pre_filled_commands)
+        self.camera = ArducamMegaCameraDataProcess()
+        self.log_content_text = QTextEdit()  # Placeholder for received content text edit widget
         self.create_layout()
-
-        # Start a thread to receive UDP packets
-        receive_thread = Thread(target=self.client.receive_packets)
-        receive_thread.daemon = True
-        receive_thread.start()
 
     def create_layout(self):
         main_widget = QWidget()
@@ -426,7 +441,7 @@ class WifiCamHostGUI(QMainWindow):
 
         video_frame_layout = QVBoxLayout()
         self.video_frame_label = QLabel("Video/Image will show here!")
-        self.video_frame_label.setScaledContents( True )
+        self.video_frame_label.setScaledContents(True)
         video_frame_layout.addWidget(self.video_frame_label)
         self.video_frame_widget.setLayout(video_frame_layout)
         splitter.addWidget(self.video_frame_widget)
@@ -436,7 +451,7 @@ class WifiCamHostGUI(QMainWindow):
         right_side_layout = QVBoxLayout()
 
         self.connect_window(right_side_layout)
-        self.capture_window(right_side_layout)  # Added Capture Window
+        self.capture_window(right_side_layout)
         self.log_window(right_side_layout)
 
         right_side_widget.setLayout(right_side_layout)
@@ -457,8 +472,7 @@ class WifiCamHostGUI(QMainWindow):
         layout_add.addWidget(label_add)
 
         self.target_server_entry = QLineEdit(f"{self.target_server[0]}:{self.target_server[1]}")
-        self.target_server_entry.setText(f"{self.target_server[0]}:{self.target_server[1]}") 
-        # Connect signal to store new input 
+        self.target_server_entry.setText(f"{self.target_server[0]}:{self.target_server[1]}")
         self.target_server_entry.textChanged.connect(self.update_target_server)
         layout_add.addWidget(self.target_server_entry)
 
@@ -470,34 +484,23 @@ class WifiCamHostGUI(QMainWindow):
         capture_tab = QWidget()
         capture_layout = QVBoxLayout()
 
-        image_resolution_layout = QHBoxLayout()  # Layout for image resolution
+        image_resolution_layout = QHBoxLayout()
         image_resolution_label = QLabel("Image Res:")
         image_resolution_layout.addWidget(image_resolution_label)
         self.image_resolution_combobox = QComboBox()
         image_resolution_options = list(self.IMAGE_RESOLUTION_OPTIONS.items())
-        self.image_resolution_combobox.addItems([size for _, size in image_resolution_options])
+        self.image_resolution_combobox.addItems([size for _, size in image_resolution_options[:-2]])
         self.image_resolution_combobox.setEnabled(False)
         self.image_resolution_combobox.currentIndexChanged.connect(self.handle_resolution_change)
+
         image_resolution_layout.addWidget(self.image_resolution_combobox)
         capture_layout.addLayout(image_resolution_layout)
 
-        # Add Capture Video Button
         self.stream_button = QPushButton("Start Stream")
         self.stream_button.setEnabled(False)
         self.stream_button.clicked.connect(self.toggle_stream_button)
         capture_layout.addWidget(self.stream_button)
 
-        # # Image Format Layout
-        # image_format_layout = QHBoxLayout()
-        # image_format_label = QLabel("Image Format:")
-        # image_format_layout.addWidget(image_format_label)
-        # self.image_format_combobox = QComboBox()
-        # image_format_options = list(self.IMAGE_FORMAT_OPTIONS.items())
-        # self.image_format_combobox.addItems([size for _, size in image_format_options])
-        # image_format_layout.addWidget(self.image_format_combobox)
-        # capture_layout.addLayout(image_format_layout)
-
-        # Add Capture Image Button
         self.capture_image_button = QPushButton("Take Picture")
         self.capture_image_button.setEnabled(False)
         self.capture_image_button.clicked.connect(self.capture_image)
@@ -508,69 +511,45 @@ class WifiCamHostGUI(QMainWindow):
 
     def toggle_stream_button(self):
         if self.stream_button.text() == "Start Stream":
-                self.stream_button.setText("Stop Stream")
-                self.capture_image_button.setEnabled(False)
-                self.client.log_content_text.clear()
-                resolution_number = list(self.IMAGE_RESOLUTION_OPTIONS.keys())[
+            self.stream_button.setText("Stop Stream")
+            self.capture_image_button.setEnabled(False)
+            self.log_content_text.clear()
+            resolution_number = list(self.IMAGE_RESOLUTION_OPTIONS.keys())[
                 list(self.IMAGE_RESOLUTION_OPTIONS.values()).index(self.image_resolution_combobox.currentText())]
-                self.send_command(self.commands.command_start_streaming_mode(resolution_number))
+            self.send_command(self.commands.command_start_streaming_mode(resolution_number))
         else:
-                self.stream_button.setText("Start Stream")
-                self.capture_image_button.setEnabled(True)
-                self.send_command(self.commands.command_stop_stream())
+            self.stream_button.setText("Start Stream")
+            self.capture_image_button.setEnabled(True)
+            self.send_command(self.commands.command_stop_stream())
 
     def handle_connect_button(self):
         if self.connect_button.text() == "Connect":
+            self.clear_log()
             self.stream_button.setText("Start Stream")
-            # Connect command receiving signal to process_received_packets slot
-            self.client.log_content_text.append(f"Connecting to WiFi Camera...")
-            self.connect_to_camera()
-            self.client.command_receiving_signal.connect(self.process_received_packets)    
+            self.log_content_text.append(f"Connecting to WiFi Camera at {self.target_server[0]}:{self.target_server[1]} ...")
+            if self.client is not None:
+                self.client.stop_signal.emit()  # Signal the client to stop
+                self.client.stop()
+                self.socket_thread.quit()
+                self.socket_thread.wait()
+            # Initialize SocketClient and socket_thread
+            self.socket_thread = QThread()
+            self.client = SocketClient(*self.target_server)
+            self.client.moveToThread(self.socket_thread)
+            self.socket_thread.started.connect(self.client.run)
+            self.socket_thread.start()
+            self.client.command_receiving_signal.connect(self.process_received_packets)
+            self.send_command(self.commands.command_get_camera_info())
         else:
             self.send_command(self.commands.command_stop_stream())
-            self.client.command_receiving_signal.disconnect()
-            self.capture_image_button.setEnabled(False)
+            self.client.command_receiving_signal.disconnect(self.process_received_packets)
+            self.client.stop_signal.emit()  # Signal the client to stop
+            self.socket_thread.quit()
+            self.connect_button.setText("Connect")
             self.stream_button.setEnabled(False)
             self.image_resolution_combobox.setEnabled(False)
-            self.connect_button.setText("Connect")
-            self.client.log_content_text.clear()
-            self.video_frame_label.setText("Video/Image will show here!")
-    
-    def connect_to_camera(self):
-        address = self.target_server_entry.text()
-        if ':' not in address:
-            QMessageBox.critical(None, "Error", "Invalid address format. Use IP:Port.")
-            return
-        ip, port = address.split(':')
-        try:
-            port = int(port)
-        except ValueError:
-            QMessageBox.critical(None, "Error", "Invalid port number.")
-            return
-        self.send_command(self.commands.command_get_camera_info())
-
-    def handle_resolution_change(self, index):
-        if self.stream_button.text() == "Stop Stream":
-            # Stop the current stream
-            self.send_command(self.commands.command_stop_stream())
-            time.sleep(0.5)  # Adjust the delay as needed
-
-            # Start the stream with the new resolution
-            resolution_number = list(self.IMAGE_RESOLUTION_OPTIONS.keys())[
-            list(self.IMAGE_RESOLUTION_OPTIONS.values()).index(self.image_resolution_combobox.currentText())]
-            self.send_command(self.commands.command_start_streaming_mode(resolution_number))
-
-    def log_window(self, layout):
-        label = QLabel("Log:")
-        layout.addWidget(label)
-
-        self.client.log_content_text = QTextEdit("Check WiFi Camera Device printout for the target address.\n Example: 192.168.1.1:60000")  # Set the text edit widget in client
-        layout.addWidget(self.client.log_content_text)
-
-        clear_button = QPushButton("Clear Log")
-        clear_button.clicked.connect(self.clear_log)
-        layout.addWidget(clear_button)
-
+            self.capture_image_button.setEnabled(False)
+            self.log_content_text.append(f"Disconnected from WiFi Camera at {self.target_server[0]}:{self.target_server[1]}")
     def send_command(self, command_str):
         hex_array = command_str.split()
         if len(hex_array) > 6:
@@ -582,19 +561,59 @@ class WifiCamHostGUI(QMainWindow):
             QMessageBox.critical(None, "Error", "Invalid hex format.")
             return
         # Show the sent command in the log window
-        if self.client.log_content_text:
-            self.client.log_content_text.append(f"SENT: {command_str}")
+        if self.log_content_text:
+            self.log_content_text.append(f"SENT: {command_str}")
         
         # Send the command
         self.client.send_command(command_str)
+    def handle_resolution_change(self, index):
+        resolution_number = list(self.IMAGE_RESOLUTION_OPTIONS.keys())[
+        list(self.IMAGE_RESOLUTION_OPTIONS.values()).index(self.image_resolution_combobox.currentText())]
+        self.send_command(self.commands.command_set_picture_resolution(1,resolution_number))
+
+        # if self.stream_button.text() == "Stop Stream":
+        #     # Stop the current stream
+        #     self.send_command(self.commands.command_stop_stream())
+        #     time.sleep(0.5)  # Adjust the delay as needed
+
+        #     # Start the stream with the new resolution
+        #     resolution_number = list(self.IMAGE_RESOLUTION_OPTIONS.keys())[
+        #     list(self.IMAGE_RESOLUTION_OPTIONS.values()).index(self.image_resolution_combobox.currentText())]
+        #     self.send_command(self.commands.command_start_streaming_mode(resolution_number))
+        
+
+    def log_window(self, layout):
+        log_window = QGroupBox()
+        log_window.setTitle("Log Content")
+
+        log_window_layout = QVBoxLayout()
+        log_window.setLayout(log_window_layout)
+
+        log_content_layout = QVBoxLayout()
+        log_window_layout.addLayout(log_content_layout)
+
+        self.log_content_text = QTextEdit("Check WiFi Camera Device printout for the target address.\n Example: 192.168.1.100:60010")  # Set the text edit widget in client
+        self.log_content_text.setReadOnly(True)
+        log_content_layout.addWidget(self.log_content_text)
+
+        layout.addWidget(log_window)  
+
+        clear_button = QPushButton("Clear Log")
+        clear_button.clicked.connect(self.clear_log)
+        layout.addWidget(clear_button)
+    
+    def clear_log(self):
+        if self.log_content_text:
+            self.log_content_text.clear()
 
     def process_received_packets(self, command_buffer):
+        self.client.command_receiving_signal.disconnect(self.process_received_packets)
         # Process the received command buffer
-        result = self.client.camera.process_command(command_buffer)
+        result = self.camera.process_command(command_buffer)
 
         # Append result to the received content text edit widget
-        if self.client.log_content_text:
-            self.client.log_content_text.append(result)
+        if self.log_content_text:
+            self.log_content_text.append(result)
         
         # Display the received video frame
         if result.startswith("Connected to WiFi Camera!"):
@@ -605,7 +624,7 @@ class WifiCamHostGUI(QMainWindow):
 
         # Display the received video frame
         if result.startswith("FrameSize"):
-            img_path = "img.temp"
+            img_path = "img.jpg"
             pixmap = QPixmap(img_path)
             self.video_frame_label.setPixmap(pixmap)
 
@@ -618,57 +637,58 @@ class WifiCamHostGUI(QMainWindow):
                 self.image_resolution_combobox.setCurrentIndex(list(self.IMAGE_RESOLUTION_OPTIONS.keys()).index(new_resolution))
             else:
                 print("New resolution not found in options.")
-                
         
         if result.startswith("Camera switch to BLE mode"):
             self.send_command(self.commands.command_stop_stream())
-            self.client.command_receiving_signal.disconnect()
+            self.client_thread.command_receiving_signal.disconnect()
             self.capture_image_button.setEnabled(False)
             self.stream_button.setEnabled(False)
             self.image_resolution_combobox.setEnabled(False)
             self.connect_button.setText("Connect")
-            self.client.log_content_text.clear()
+            self.log_content_text.clear()
             self.video_frame_label.setText("Video/Image will show here!")
-            self.client.log_content_text.append(f"Camera switch to BLE mode!\nPlease check Android App.")    
+            self.log_content_text.append(f"Camera switch to BLE mode!\nPlease check Android App.")    
 
-        if result.startswith("Camera switch to UDP mode"):
-            self.client.log_content_text.append(f"Camera switch back to UDP mode!\n Please try with connect button again.")   
+        if result.startswith("Camera switch to Socket mode"):
+            self.log_content_text.append(f"Camera switch back to Socket mode!\n Please try with connect button again.")
+        self.client.command_receiving_signal.connect(self.process_received_packets)
 
-
-    # Update method
     def update_target_server(self, text):
-         # Update target server 
-        try:
+        if ':' in text:
             ip, port = text.split(':')
-        except ValueError:
-            QMessageBox.warning(self, "Invalid Input", "Please enter address as IP:Port")
-            return
-
-        self.target_server = (ip, int(port))
-
-        # Save config
-        self.config['DEFAULT'] = {
-            'TargetIP': self.target_server[0], 
-            'TargetPort': str(self.target_server[1])
-        }
-        
-        with open('config.ini', 'w') as f: 
-            self.config.write(f)
+            self.target_server = (ip, int(port))
 
     def capture_image(self):
-        resolution_number = list(self.IMAGE_RESOLUTION_OPTIONS.keys())[list(self.IMAGE_RESOLUTION_OPTIONS.values()).index(self.image_resolution_combobox.currentText())]
-        #format_number = list(self.IMAGE_FORMAT_OPTIONS.keys())[list(self.IMAGE_FORMAT_OPTIONS.values()).index(self.image_format_combobox.currentText())]
-        format_number = 1
-        self.send_command(self.commands.command_set_picture_resolution(format_number,resolution_number))
+        self.log_content_text.append(f"Sending Take Picture command...")
+        # resolution_number = list(self.IMAGE_RESOLUTION_OPTIONS.keys())[
+        #         list(self.IMAGE_RESOLUTION_OPTIONS.values()).index(self.image_resolution_combobox.currentText())]
+        # self.send_command(self.commands.command_set_picture_resolution(1,resolution_number))
         self.send_command(self.commands.command_take_picture())
+        self.log_content_text.append(f"Take Picture command sent!")
 
-    def clear_log(self):
-        if self.client.log_content_text:
-            self.client.log_content_text.clear()
+    def closeEvent(self, event):
+        # reply = QMessageBox.question(self, 'Exit', 'Are you sure you want to exit?',
+        #                              QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        # if reply == QMessageBox.Yes:
+        #     if self.client is not None:
+        #         self.send_command(self.commands.command_stop_stream())
+        #         self.client.stop_signal.emit()  # Signal the client to stop
+        #         self.client.stop()
+        #         self.socket_thread.quit()
+        #         self.socket_thread.wait()
+        #     event.accept()
+        # else:
+        #     event.ignore()
+        
+        self.send_command(self.commands.command_stop_stream())
+        self.client.stop_signal.emit()  # Signal the client to stop
+        self.client.stop()
+        self.socket_thread.quit()
+        self.socket_thread.wait()
 
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = WifiCamHostGUI()
     window.show()
-    sys.exit(app.exec_())
+    sys.exit(app.exec())
