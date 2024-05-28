@@ -34,79 +34,79 @@ Here is the pin connection with the Arducam Mega SPI Camera marked on the nRF700
 # Firmware Preparation
 ---
 
-## How firmware works
+## Main features:
 
-The fimware running on Camera Device(nRF7002DK+ArduCAM Mega) can connect with Wi-Fi Camera host and BLE Camear App at same.
-For Wi-Fi connection, it can use either UDP and TCP socket. 
+The fimware running on Camera Device(nRF7002DK+ArduCAM Mega) has following main features:
+
+1. Connect with Wi-Fi Camera host and BLE Camear App at same time.
+2. The device can run at both SoftAP mode and Station mode. It will run at SoftAP mode at 5GHz by default so PC host can connect with it direclty without a router. Press button 1 in three seocnds after booting to swith to Station mode.
+3. For Wi-Fi connection, it can support eithe UDP or TCP scocket. UDP is used by default, and it can swith to TCP socket by adding "overlay_tcp_socket.conf".
 
 ## Install nRF Connect SDK(NCS) version 2.6.1
 
 Please refer to https://developer.nordicsemi.com/nRF_Connect_SDK/doc/2.6.1/nrf/installation.html
 
-## Cherry pick ArduCAM Mega Zephyr driver
-Open a TERMINAL with nRF Connect environment at VS code, and run the following commands.
-```
-cd c:/ncs/v2.6.1/zephyr
-git remote add arducam https://github.com/ArduCAM/zephyr.git 
-git fetch arducam
-From https://github.com/ArduCAM/zephyr
- * [new branch]              add_arducam_mega_beta    -> arducam/add_arducam_mega_beta
- * [new branch]              add_arducam_mega_driver  -> arducam/add_arducam_mega_driver
- * [new branch]              add_full_featured_sample -> arducam/add_full_featured_sample
- * [new branch]              main                     -> arducam/main
- * [new branch]              update_video_controls    -> arducam/update_video_controls
-git log arducam/add_arducam_mega_driver
-git cherry-pick 1164c589c5b
-git cherry-pick c78faada64f 
-git cherry-pick 1e96928018c 
-git cherry-pick 60de7c4462e
-git remote remove arducam
-```
 ## Download this repository
 
 ```
 git clone https://github.com/NordicPlayground/nrf70-wifi-ble-image-transfer-demo.git
 ```
 
-## Add patched arducam driver
+## Apply arducam_mega_support.patch to add ArduCAM Mega Camera Zephyr driver
 
-Copy the file replace_arducam_mega.c from this repository into the following SDK folder:
-C:\ncs\v2.5.2\zephyr\drivers\video
+Copy arducam_mega_support.path into ncs/v2.6.1/zephyr folder and run the following command to apply and check the patch changes.
 
-Rename or delete the original arducam_mega.c file, and rename replace_arducam_mega.c to arducam_mega.c
+```
+PS C:\ncs\v2.6.1\zephyr> git apply arducam_mega_support.patch
+PS C:\ncs\v2.6.1\zephyr> git status 
+On branch arducam
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+        modified:   drivers/video/CMakeLists.txt
+        modified:   drivers/video/Kconfig
+        modified:   dts/bindings/vendor-prefixes.txt
+        modified:   include/zephyr/drivers/video-controls.h
+        modified:   include/zephyr/drivers/video.h
+
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+        drivers/video/Kconfig.arducam_mega
+        drivers/video/arducam_mega.c
+        dts/bindings/video/arducam,mega.yaml
+        include/zephyr/drivers/video/
+        samples/drivers/video/
+
+no changes added to commit (use "git add" and/or "git commit -a")
+```
 
 ## Firmware Building
 
-There are two options for enabling WiFi connection. If the WiFi AP(Access Point) is not fixed, you can build firmware with option 1). If you have a fixed AP, building firmware with option 2) will make your life much easier because you can avoid manual WiFi connection setup.
-
-1) Firmware that enables WiFi using terminal commands. 
-
-Build the firmwre with default configuration using nRF Connect SDK VS Code extension or the following command:
+1) Build the firmwre using UDP socket using nRF Connect SDK VS Code extension GUI or the following command.
 
 ```
 west build -b nRF7002dk_nrf5340_cpuapp
 ```
 
-2) Firmware that enables WiFi with static crendtials.
+2) Firmware that use TCP socket.
 
 ```
-west build -b nRF7002dk_nrf5340_cpuapp -- -DEXTRA_CONF_FILE=overlay-wifi-crendtials-static.conf
+west build -b nRF7002dk_nrf5340_cpuapp -- -DEXTRA_CONF_FILE=overlay_tcp_socket.conf
 ```
 
-Fill your WiFi AP SSID and Password, add overlay-wifi-crendtials-static.conf to build the firmware.
+## Wi-Fi Connection build
 
+1) SoftAP Mode
+
+Connect you PC to the AP with following SSID and Password:
 
 ```
-# Enable static Wi-Fi network configuration
-CONFIG_WIFI_CREDENTIALS_STATIC=y
-CONFIG_WIFI_CREDENTIALS_STATIC_SSID="your-ssid"
-CONFIG_WIFI_CREDENTIALS_STATIC_PASSWORD="your-password"
-# Disable support for shell commands
-CONFIG_SHELL=n
+CONFIG_SOFTAP_SAMPLE_SSID="WiFi_Cam_Demo_AP"
+CONFIG_SOFTAP_SAMPLE_PASSWORD="nRF7002DK"
 ```
-## Wi-Fi provisioning
 
-Assuming step 1) was chosen during the Firmware Building phase, Wi-Fi provisioning has to be handled at runtime. To do so open a UART terminal and connect it to VCOM1 on the nRF7002DK. Use the following commands to connect with the target WiFi AP. Please refer to DevAcademy [WiFi Fundamentals course Exercise 1](https://academy.nordicsemi.com/courses/wi-fi-fundamentals/lessons/lesson-3-wifi-fundamentals/topic/lesson-3-exercise-1-2/) for more details about "wifi_cred" commands.
+2) Station Mode
+Press button 1 in three seocnds after device booting to swith to Station mode. Wi-Fi provisioning has to be handled at runtime. To do so open a UART terminal and connect it to VCOM1 on the nRF7002DK. Use the following commands to connect with the target WiFi AP. Please refer to DevAcademy [WiFi Fundamentals course Exercise 1](https://academy.nordicsemi.com/courses/wi-fi-fundamentals/lessons/lesson-3-wifi-fundamentals/topic/lesson-3-exercise-1-2/) for more details about "wifi_cred" commands.
 
 ```
 uart:~$ wifi_cred help
@@ -120,10 +120,8 @@ uart:~$ wifi_cred add help
 Usage: wifi_cred add "network name" {OPEN, WPA2-PSK, WPA2-PSK-SHA256, WPA3-SAE} [psk/password] [bssid] [{2.4GHz, 5GHz}] [favorite]
 uart:~$ wifi_cred add "your-ssid" WPA2-PSK "your-password"
 uart:~$ wifi_cred auto_connect
-
 ```
-If the nRF7002DK connected with an AP succesfully, the WiFi credentionals will be stored. The nRF7002DK will try to reconnect automatically using stored credentionals after a device reset.
-A pre-built fimrware with wifi_cred shell support is avliable here [prebuildtFW/ncs252_wifi_camera_shell_ew24.hex](prebuildtFW/).
+If the nRF7002DK connected with an AP succesfully,  you will see its IP address in the local network. The WiFi credentionals also will be stored. Only "wifi_cred auto_connect" be necessary next time to do connection.
 
 # WiFi Camera Host GUI Application(WiFiCamHost) 
 
@@ -135,25 +133,14 @@ Ensure you have installed a recent Python version then run the following command
 ```
 cd WiFICamHost
 pip install -r requirements.txt
-python WiFi_Cam_Host.py
+python WiFi_Cam_Host_UDP.py
 ```
 
 # Testing
 
----
-
-1) Get the WiFi Camera address from its log after the WiFi connection is established.
 ```
- <inf> NetUtil: WiFi Camera Server is ready on nRF7002DK, copy and paste 192.168.1.101:60000 in Target WiFi Camera Address window on WiFi Camera Host.
-```
-2) Run the WiFiCamHost script and connect to the target address from a PC on the same local network.
-3) In the Video table, choose a resolution and press start stream, then the video stream will start.
+1) After Wi-Fi connnection is built between PC and Wi-Fi Camera. Run the WiFiCamHost script according to the socket type the firmware supported. 
+2) In the Video table, choose a resolution and press start stream, then the video stream will start.
 
 ![WiFiCamHost](images/WiFiCamHost.png)
 
-## Future Improvments
-
-1) Modify overlay-tx-prioritized.conf to potentioally improve WiFi speed.
-2) FPS and ThroughPut calculation in WiFi_Cam_Host.py is not accurate.
-3) [zperf](https://academy.nordicsemi.com/courses/wi-fi-fundamentals/lessons/lesson-3-wifi-fundamentals/topic/lesson-3-exercise-2/) can be used to evaluate current WiFi environment, e.g. general UDP bandwidth, loss rate.
-4) A simple test on 5GH band WiFi AP shows that socket_recv is ok, but socket_send seems to be blocked for some reason. Tests on 2.4GH have no issue.
