@@ -17,8 +17,6 @@ venv
 .venv
 .idea
 
-/*.patch
-
 tags
 .project
 .cproject
