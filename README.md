@@ -85,13 +85,13 @@ no changes added to commit (use "git add" and/or "git commit -a")
 1) Build the firmwre using UDP socket using nRF Connect SDK VS Code extension GUI or the following command.
 
 ```
-west build -b nRF7002dk_nrf5340_cpuapp
+west build -b nrf7002dk_nrf5340_cpuapp
 ```
 
 2) Firmware that use TCP socket.
 
 ```
-west build -b nRF7002dk_nrf5340_cpuapp -- -DEXTRA_CONF_FILE=overlay_tcp_socket.conf
+west build -b nrf7002dk_nrf5340_cpuapp -- -DEXTRA_CONF_FILE=overlay_tcp_socket.conf
 ```
 
 ## Wi-Fi Connection build
@@ -138,7 +138,6 @@ python WiFi_Cam_Host_UDP.py
 
 # Testing
 
-```
 1) After Wi-Fi connnection is built between PC and Wi-Fi Camera. Run the WiFiCamHost script according to the socket type the firmware supported. 
 2) In the Video table, choose a resolution and press start stream, then the video stream will start.
 
