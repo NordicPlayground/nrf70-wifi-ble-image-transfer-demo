@@ -248,7 +248,7 @@ void video_preview(void)
 			socket_head_and_tail[2] = 0x01;
 			cam_send(&socket_head_and_tail[0], 3);
 			cam_send((uint8_t *)&vbuf->bytesframe, 4);
-			LOG_INF("bytesframe:%d",vbuf->bytesframe);
+			LOG_DBG("bytesframe:%d",vbuf->bytesframe);
 		}
 	}
 
@@ -257,7 +257,7 @@ void video_preview(void)
 	} 
 	if (client_state_socket.stream_active) {
 		cam_send_picture_data_socket(vbuf->buffer, vbuf->bytesused);
-		LOG_INF("bytesused:%d",vbuf->bytesused);
+		LOG_DBG("bytesused:%d",vbuf->bytesused);
 	}
 
 	if (f_status == VIDEO_BUF_EOF)
