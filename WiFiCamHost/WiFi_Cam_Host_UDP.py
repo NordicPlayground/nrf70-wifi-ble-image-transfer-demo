@@ -323,7 +323,7 @@ class SocketClient(QObject):
 
     def send_command(self, command_str):
         try:
-            print("SocketClient send_command")
+            print(f"SocketClient send_command:{command_str}")
             # Convert the command string to bytes
             command_bytes = bytes.fromhex(command_str)
             # Send the command bytes to the server
@@ -341,11 +341,8 @@ class SocketClient(QObject):
                 if self.pc_socket:
                     data, _ = self.pc_socket.recvfrom(self.buffer_size) #Max 1024 for UDP
                     bytes_received = len(data)
-                    total_bytes_received += bytes_received
-                    # Print the received content as hexadecimal
-                    received_hex = ' '.join(f'{byte:02x}' for byte in data)
-                    print(f"Received({bytes_received}): {received_hex}")
-                    print(f"Total bytes received: {total_bytes_received}")
+                    # received_hex = ' '.join(f'{byte:02x}' for byte in data)
+                    # print(f"Received({bytes_received}): {received_hex}")
 
                     # Check if the packet starts with FF AA
                     if data.startswith(b'\xFF\xAA'):
@@ -354,7 +351,6 @@ class SocketClient(QObject):
                         self.in_command = True
                         # Append the packet to the command buffer
                         self.command_buffer += data
-
                     # Check if the packet ends with FF BB and in a command
                     elif data.endswith(b'\xFF\xBB') and self.in_command:
                         # Append the packet to the command buffer
@@ -365,13 +361,31 @@ class SocketClient(QObject):
                         self.command_buffer = b''
                         self.in_command = False
                         total_bytes_received=0
-
+                        bytesframe = 0
                     # Check if the packet is a command packet and in a command
                     elif self.in_command:
-                        # Append the packet to the command buffer
+                        # Append the packet to the command buffe
                         self.command_buffer += data
+                        # temp = ' '.join(f'{byte:02x}' for byte in self.command_buffer)
+                        # print(f"command_buffer: {temp}")
+                        if self.command_buffer[2] == 0x01:# Process picture frame
+                            if bytesframe == 0:
+                                bytesframe = int.from_bytes(data, byteorder='little')
+                            else:
+                                total_bytes_received += bytes_received
+                                if total_bytes_received > bytesframe:
+                                    print(f"Picture frame data corrupted!")
+                                    total_bytes_received=0
+                                    bytesframe = 0
+                                    self.command_buffer = b''
+                                else:
+                                    # Print the received content as hexadecimal
+                                    # received_hex = ' '.join(f'{byte:02x}' for byte in data)
+                                    # print(f"Received({bytes_received}): {received_hex}")
+                                    print(f"Bytes received/FrameSize: {total_bytes_received}/{bytesframe},{(total_bytes_received / bytesframe) * 100:.2f}%")
                     else:
                         total_bytes_received=0
+                        bytesframe = 0
 
         except Exception as e:
             if self.running:
