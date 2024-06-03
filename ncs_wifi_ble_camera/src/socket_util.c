@@ -128,31 +128,6 @@ void cam_send(const void *buf, size_t len){
 		#endif
 }
 
-void handle_client(int server_socket) {
-		ssize_t bytes_recived;
-		
-		#if defined(CONFIG_SAMPLE_SCOKET_TCP)
-			while((bytes_recived = recv(server_socket, socket_recv_buf, sizeof(socket_recv_buf),0))>0){
-				trigger_socket_rx_callback_if_set(socket_recv_buf);
-			}
-			if (bytes_recived == -1) {
-				LOG_ERR("Receiving failed");
-			} else if (bytes_recived == 0) {
-				LOG_INF("Client disconnected.\n");
-			}
-		#else
-			while((bytes_recived = recvfrom(server_socket, socket_recv_buf, sizeof(socket_recv_buf), 0, (struct sockaddr *)&pc_addr, &pc_addr_len))>0){
-				trigger_socket_rx_callback_if_set(socket_recv_buf);
-			}
-			if (bytes_recived == -1) {
-				LOG_ERR("Receiving failed");
-			} else if (bytes_recived == 0) {
-				LOG_INF("Client disconnected.\n");
-        	}
-		#endif
-		close(server_socket);
-}
-
 /* Thread to setup WiFi, Network, Sockets step by step */
 static void wifi_net_sockets(void)
 {
