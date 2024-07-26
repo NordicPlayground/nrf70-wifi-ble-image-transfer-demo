@@ -52,7 +52,7 @@ socklen_t pc_addr_len=sizeof(pc_addr);
 
 /* Define the semaphore wifi_net_ready */
 struct k_sem wifi_net_ready;
-enum wifi_modes wifi_mode=WIFI_SOFTAP_MODE;
+enum wifi_modes wifi_mode=WIFI_STATION_MODE;
 
 uint8_t socket_recv_buf[BUFFER_MAX_SIZE];
 K_MSGQ_DEFINE(socket_recv_queue, sizeof(socket_recv_buf), 1, 4);
@@ -108,7 +108,7 @@ static void button_handler(uint32_t button_state, uint32_t has_changed)
 {
 	uint32_t buttons = button_state & has_changed;
 	if (buttons & DK_BTN1_MSK) {
-		wifi_mode = WIFI_STATION_MODE;
+		wifi_mode = WIFI_SOFTAP_MODE;
 	}else if (buttons & DK_BTN2_MSK){
 		close(tcp_server_listen_fd);
 		close(tcp_server_socket);
@@ -144,7 +144,7 @@ static void wifi_net_sockets(void)
 	{
 		LOG_ERR("Failed to initialize the LED library");
 	}
-	LOG_INF("\r\n\r\nPress Button1 in THREE seconds to change WiFi from softAP mode to Station mode.\r\n");
+	LOG_INF("\r\n\r\nPress Button1 in THREE seconds to change WiFi from Station mode to softAP mode.\r\n");
 	k_sleep(K_SECONDS(3));
 
     if(wifi_mode == WIFI_SOFTAP_MODE){

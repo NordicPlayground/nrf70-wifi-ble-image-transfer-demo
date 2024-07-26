@@ -85,7 +85,7 @@ static void on_net_event_dhcp_bound(struct net_mgmt_event_callback *cb)
 	const struct in_addr *addr = &dhcpv4->requested_ip;
 	char dhcp_info[128];
 	net_addr_ntop(AF_INET, addr, dhcp_info, sizeof(dhcp_info));
-	LOG_INF("\r\n\r\nWiFi Camera is ready on nRF7002DK. Run WiFICamHost GUI script, then copy and paste %s, in Target WiFi Camera Address window on WiFi Camera Host.\r\n", dhcp_info);
+	LOG_INF("\r\n\r\nWiFi Camera is ready on nRF7002DK. Run WiFICamHost GUI script, then copy and paste %s:60010, in Target WiFi Camera Address window on WiFi Camera Host.\r\n", dhcp_info);
 }
 
 /* Define the callback function for network events */
