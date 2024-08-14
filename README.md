@@ -42,9 +42,9 @@ The fimware running on Camera Device(nRF7002DK+ArduCAM Mega) has following main 
 2. The device can run at both SoftAP mode and Station mode. It will run at SoftAP mode at 5GHz by default so PC host can connect with it direclty without a router. Press button 1 in three seocnds after booting to swith to Station mode.
 3. For Wi-Fi connection, it can support eithe UDP or TCP scocket. UDP is used by default, and it can swith to TCP socket by adding "overlay_tcp_socket.conf".
 
-## Install nRF Connect SDK(NCS) version 2.6.1
+## Install nRF Connect SDK(NCS) version 2.7.0
 
-Please refer to https://developer.nordicsemi.com/nRF_Connect_SDK/doc/2.6.1/nrf/installation.html
+Please refer to https://developer.nordicsemi.com/nRF_Connect_SDK/doc/2.7.0/nrf/installation.html
 
 ## Download this repository
 
@@ -54,11 +54,11 @@ git clone https://github.com/NordicPlayground/nrf70-wifi-ble-image-transfer-demo
 
 ## Apply arducam_mega_support.patch to add ArduCAM Mega Camera Zephyr driver
 
-Copy arducam_mega_support.path into ncs/v2.6.1/zephyr folder and run the following command to apply and check the patch changes.
+Copy arducam_mega_support.path into ncs/v2.7.0/zephyr folder and run the following command to apply and check the patch changes.
 
 ```
-PS C:\ncs\v2.6.1\zephyr> git apply arducam_mega_support.patch
-PS C:\ncs\v2.6.1\zephyr> git status 
+PS C:\ncs\v2.7.0\zephyr> git apply ncs270.patch
+PS C:\ncs\v2.7.0\zephyr> git status 
 On branch arducam
 Changes not staged for commit:
   (use "git add <file>..." to update what will be committed)
